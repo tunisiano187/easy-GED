@@ -12,16 +12,20 @@
 
 ### Matériel obligatoire (à acheter)
 
-| Composant | Modèle recommandé | Lien | Prix estimé |
-|---|---|---|---|
-| 🖥️ **Serveur** | NiPoGi E3B (Ryzen 5 7430U, 16 Go, 512 Go) | [Amazon.fr →](https://www.amazon.fr/NiPoGi-Windows-Ordinateur-Bureau-Graphique/dp/B09X2PMLD9) | ~200 € |
-| 💾 **SSD 1 To** (si le serveur livré sans) | Kingston NV2 M.2 NVMe 1 To | [Amazon.fr →](https://www.amazon.fr/Kingston-NVMe-PCIe-1000G-SNV2S/dp/B0BBWH1R8H) | ~55 € |
-| 📄 **Scanner (option 1)** | Fujitsu ScanSnap iX1300 (compact, push SMB auto) | [Amazon.fr →](https://www.amazon.fr/ScanSnap-iX1300-Document-Automatique-Standards/dp/B09HS7WRNX) | ~250 € |
-| 📄 **Scanner (option 2)** | Brother ADS-1800W (écran tactile, WiFi) | [Amazon.fr →](https://www.amazon.fr/Brother-ADS-1800W-Scanner-Compact-Portable/dp/B0CYTKGLRP) | ~200 € |
+> ⚠️ **Les prix Amazon varient quotidiennement** — vérifier le prix au moment de l'achat.
 
-> **💡 Conseil achat serveur :** Si tu trouves un modèle avec Ryzen 7430U/7530U + 16 Go + 1 To intégré dans ta fourchette de prix, prends-le directement. Sinon, la combinaison NiPoGi E3B + SSD Kingston est la plus économique.
+| Composant | Modèle recommandé | Recherche Amazon.fr |
+|---|---|---|
+| 🖥️ **Serveur Mini PC** | Mini PC Ryzen 7430U/7530U, 16 Go RAM, **1 To NVMe** (viser 1 To intégré) | [Chercher →](https://www.amazon.fr/s?k=mini+pc+ryzen+7430U+16go+1to) |
+| 💾 **SSD 1 To** (si serveur livré en 512 Go) | Kingston NV2 ou NV3, M.2 NVMe 1 To | [Chercher →](https://www.amazon.fr/s?k=ssd+nvme+m2+1to+kingston) |
+| 📄 **Scanner (option WiFi/SMB)** | Fujitsu ScanSnap iX1300 — compact, pousse directement via SMB sans PC | [Voir →](https://www.amazon.fr/ScanSnap-iX1300-Document-Automatique-Standards/dp/B09HS7WRNX) |
+| 📄 **Scanner (option USB + Pi 5)** | Brother ADS-1200 — USB, ultra-compact, avaleur, compatible Linux/SANE | [Voir →](https://www.amazon.fr/Brother-ADS-1200-Documents-Portable-Plastifi%C3%A9es/dp/B07H3CTHF3) |
 
-> **💡 Scanner :** Le ScanSnap iX1300 est le meilleur pour l'intégration murale (format U-turn, compact). Le Brother ADS-1800W a un écran tactile qui simplifie la configuration des raccourcis.
+> **💡 Conseil serveur :** Chercher un Mini PC avec le SSD **déjà en 1 To** — c'est souvent plus économique qu'acheter serveur + SSD séparément. Mots-clés : `mini pc ryzen 7430U 1to 16go`.
+
+> **💡 Scanner :**
+> - **ScanSnap iX1300** : scanner WiFi/USB compact (format U-turn). Se connecte en SMB directement à la VM — aucun PC intermédiaire. Idéal si tu n'as pas de Pi 5.
+> - **Brother ADS-1200** : USB uniquement, ultra-compact, duplex 25 ppm, ADF 20 feuilles. Branché au **Raspberry Pi 5** → numérisation automatique dès qu'un document est inséré (service SANE + scanbd inclus dans `docker-compose.pi.yml`). Compatible Linux nativement (driver `brscan5`).
 
 ### Matériel déjà en ta possession
 
