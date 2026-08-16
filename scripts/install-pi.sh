@@ -129,6 +129,53 @@ else
   read -rp "Appuyer sur ENTRÉE quand le .env est configuré..." _
 fi
 
+# --- Créer le dossier consume partagé ---
+echo ""
+info "Création du dossier consume (partagé entre Docker et le service autoscan)..."
+mkdir -p /opt/easy-ged-pi/consume
+chmod 777 /opt/easy-ged-pi/consume
+success "Dossier /opt/easy-ged-pi/consume créé"
+
+# --- Scanner USB (Brother ADS-1200) : installation optionnelle ---
+echo ""
+echo -e "${BLUE}┌────────────────────────────────────────────────┐${NC}"
+echo -e "${BLUE}│   Scanner USB Brother ADS-1200 (optionnel)     │${NC}"
+echo -e "${BLUE}└────────────────────────────────────────────────┘${NC}"
+echo ""
+echo "  Si tu as un scanner USB (Brother ADS-1200) branché sur ce Pi :"
+echo "  Le service ged-autoscan scannera automatiquement chaque document inséré."
+echo ""
+read -rp "Installer le service autoscan (scanner USB Brother ADS-1200) ? [o/N] " INSTALL_AUTOSCAN
+INSTALL_AUTOSCAN="${INSTALL_AUTOSCAN:-N}"
+
+if [[ "$INSTALL_AUTOSCAN" =~ ^[oOyY] ]]; then
+    echo ""
+    info "Installation du driver Brother brscan5..."
+    chmod +x "$INSTALL_DIR/scanner/install-brscan5.sh"
+    "$INSTALL_DIR/scanner/install-brscan5.sh"
+
+    info "Installation du service systemd ged-autoscan..."
+    chmod +x "$INSTALL_DIR/scanner/autoscan.sh"
+
+    # Personnaliser le chemin dans le service
+    sed "s|/opt/easy-ged-pi|${INSTALL_DIR}|g" \
+        "$INSTALL_DIR/scanner/autoscan.service" \
+        > /etc/systemd/system/ged-autoscan.service
+
+    systemctl daemon-reload
+    systemctl enable ged-autoscan
+    systemctl start ged-autoscan || warning "Le service démarrera quand le scanner sera branché."
+    success "Service ged-autoscan installé et activé"
+
+    echo ""
+    echo -e "${YELLOW}⚠ Si le scanner n'est pas encore branché :${NC}"
+    echo "   systemctl start ged-autoscan   ← lancer une fois le scanner connecté"
+    echo "   journalctl -u ged-autoscan -f  ← voir les logs en temps réel"
+else
+    info "Installation du service autoscan ignorée."
+    echo "  Pour l'installer plus tard : sudo $INSTALL_DIR/scanner/install-brscan5.sh"
+fi
+
 # --- Démarrer la stack Pi ---
 echo ""
 info "Démarrage de la stack Pi (Samba + Pusher + Watchtower)..."

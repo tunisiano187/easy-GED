@@ -5,27 +5,51 @@
 # et les envoie à Paperless-ngx sur la VM Proxmox via l'API REST.
 #
 # Le Pi gère :
-#   1. Réception des scans via SMB (le scanner y envoie ses PDFs)
-#   2. Transfert automatique vers Paperless sur la VM
-#   3. Monitoring UPS APC (si UPS branché en USB sur le Pi)
+#   1. [WiFi/SMB] Réception des scans via SMB (ScanSnap iX1300 → \\IP_PI\consume)
+#   2. [USB auto]  Numérisation automatique dès qu'un doc est inséré (ADS-1200)
+#                  → Service systemd "ged-autoscan" (hors Docker, voir scanner/)
+#                  → Dépose les PDFs dans CONSUME_DIR sur l'hôte
+#   3. Transfert automatique vers Paperless sur la VM via API REST
+#   4. [Profil nut] Serveur NUT — le Pi EST le serveur car l'UPS APC y est
+#                  branché en USB physique. Les VMs/NAS se connectent en tant
+#                  que clients NUT sur le port 3493.
+#
+# DOSSIER PARTAGÉ :
+#   Le dossier /opt/easy-ged-pi/consume est partagé entre :
+#   • Le service systemd ged-autoscan (scanner USB → dépose les PDFs)
+#   • pi-samba (scanner WiFi → reçoit les PDFs via SMB)
+#   • pi-pusher (surveille et envoie chaque PDF vers Paperless)
 #
 # Usage :
-#   docker compose -f docker-compose.pi.yml up -d
+#   docker compose -f docker-compose.pi.yml up -d              # Stack de base
+#   docker compose -f docker-compose.pi.yml --profile nut up -d  # + serveur NUT
 #
 # Prérequis dans .env :
 #   PAPERLESS_URL=http://IP_VM:8000
 #   PAPERLESS_API_TOKEN=xxx          ← Créer dans Paperless → Tokens API
 #   SCANNER_SMB_USER=scanner
 #   SCANNER_SMB_PASSWORD=xxx
+#   # Si UPS branché sur le Pi :
+#   NUT_UPSD_USER=upsmon
+#   NUT_UPSD_PASSWORD=<MOT_DE_PASSE>   ← définir dans .env
 #
-# Voir README.md → section "Raspberry Pi 5 (mode split)"
+# Pour le scanner USB :
+#   sudo ./scanner/install-brscan5.sh
+#   sudo cp scanner/autoscan.service /etc/systemd/system/ged-autoscan.service
+#   sudo systemctl enable --now ged-autoscan
+#
+# Voir README.md → sections "Scanner USB" et "Monitoring UPS APC"
 # =============================================================================
 
 services:
 
   # ---------------------------------------------------------------------------
-  # Samba — Réception fichiers scanner
+  # Samba — Réception fichiers scanner WiFi (ScanSnap iX1300)
   # Le scanner envoie ses PDFs vers \\IP_PI\consume
+  #
+  # Note : pour le scanner USB (Brother ADS-1200), les PDFs sont déposés
+  # directement par le service systemd ged-autoscan (voir scanner/autoscan.sh)
+  # Les deux méthodes partagent le même dossier /opt/easy-ged-pi/consume.
   # ---------------------------------------------------------------------------
   pi-samba:
     image: dperson/samba:latest
@@ -41,13 +65,17 @@ services:
       -s "consume;/consume;yes;no;no;${SCANNER_SMB_USER:-scanner};${SCANNER_SMB_USER:-scanner};Paperless Consume"
       -p
     volumes:
-      - consume-pi:/consume
+      # Bind mount sur l'hôte — partagé avec le service autoscan (scanner USB)
+      - /opt/easy-ged-pi/consume:/consume
     networks:
       - pi-network
 
   # ---------------------------------------------------------------------------
   # Pi Pusher — Surveille /consume et envoie chaque nouveau fichier à Paperless
   # Utilise inotifywait pour détecter les nouveaux scans en temps réel
+  # Sources possibles :
+  #   - Scanner WiFi via Samba (ScanSnap iX1300)
+  #   - Scanner USB via service systemd ged-autoscan (Brother ADS-1200)
   # ---------------------------------------------------------------------------
   pi-pusher:
     image: alpine:3.19
@@ -57,7 +85,8 @@ services:
       PAPERLESS_URL: ${PAPERLESS_URL:-http://192.168.1.42:8000}
       PAPERLESS_API_TOKEN: ${PAPERLESS_API_TOKEN:-}
     volumes:
-      - consume-pi:/consume
+      # Même bind mount que pi-samba et le service autoscan
+      - /opt/easy-ged-pi/consume:/consume
       - ./paperless/scripts/push-to-paperless.sh:/push-to-paperless.sh:ro
     entrypoint: ["/bin/sh", "-c"]
     command: |
@@ -87,42 +116,64 @@ services:
       - pi-network
 
   # ---------------------------------------------------------------------------
-  # NUT UPS Daemon — Monitoring APC (optionnel — si UPS branché sur le Pi)
-  # Décommenter si un UPS APC est connecté en USB au Raspberry Pi
+  # NUT — Serveur UPS (profil "nut")
+  #
+  # Le Pi est le SERVEUR NUT car l'UPS APC y est branché physiquement en USB.
+  # Les clients NUT (VM Proxmox, NAS Synology, autres machines) se connectent
+  # à ce service sur le port 3493.
+  #
+  # Activer avec :
+  #   docker compose -f docker-compose.pi.yml --profile nut up -d
+  #
+  # Prérequis dans .env :
+  #   NUT_UPSD_USER=upsmon
+  #   NUT_UPSD_PASSWORD=<MOT_DE_PASSE>   ← définir dans .env
+  #   NUT_UPS_NAME=apc          (nom logique, libre)
+  #   NUT_UPS_DRIVER=usbhid-ups (driver APC USB — usbhid-ups pour la plupart)
+  #
+  # Vérifier l'UPS détecté : lsusb | grep -i apc
   # ---------------------------------------------------------------------------
-  # nut-upsd:
-  #   image: instantlinux/nut-upsd:latest
-  #   container_name: nut-upsd
-  #   restart: unless-stopped
-  #   ports:
-  #     - "3493:3493"
-  #   environment:
-  #     UPS_NAME: ${NUT_UPS_NAME:-apc}
-  #     UPS_DRIVER: ${NUT_UPS_DRIVER:-usbhid-ups}
-  #     UPS_PORT: auto
-  #     API_USER: ${NUT_UPSD_USER:-upsmon}
-  #     API_PASSWORD: ${NUT_UPSD_PASSWORD}
-  #   devices:
-  #     - /dev/bus/usb:/dev/bus/usb
-  #   privileged: true
-  #   networks:
-  #     - pi-network
+  nut-upsd:
+    profiles: ["nut"]
+    image: instantlinux/nut-upsd:latest
+    container_name: pi-nut-upsd
+    restart: unless-stopped
+    ports:
+      - "3493:3493"    # Port NUT — ouvert aux clients du réseau local
+    environment:
+      UPS_NAME:     ${NUT_UPS_NAME:-apc}
+      UPS_DRIVER:   ${NUT_UPS_DRIVER:-usbhid-ups}
+      UPS_PORT:     auto
+      API_USER:     ${NUT_UPSD_USER:-upsmon}
+      API_PASSWORD: ${NUT_UPSD_PASSWORD}
+    # Passe tous les périphériques USB (requis pour l'UPS APC)
+    # Pour cibler précisément : lsusb → repérer bus/device → adapter ci-dessous
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    privileged: true    # Requis pour l'accès USB HID (UPS APC)
+    networks:
+      - pi-network
 
-  # nut-monitor:
-  #   image: teknologist/webnut:latest
-  #   container_name: nut-monitor
-  #   restart: unless-stopped
-  #   ports:
-  #     - "6543:6543"
-  #   environment:
-  #     NUT_HOST: nut-upsd
-  #     NUT_PORT: 3493
-  #     NUT_USER: ${NUT_UPSD_USER:-upsmon}
-  #     NUT_PASSWD: ${NUT_UPSD_PASSWORD}
-  #   depends_on:
-  #     - nut-upsd
-  #   networks:
-  #     - pi-network
+  # ---------------------------------------------------------------------------
+  # NUT Monitor — Interface web de monitoring UPS (profil "nut")
+  # Accessible sur http://IP_PI:6543
+  # ---------------------------------------------------------------------------
+  nut-monitor:
+    profiles: ["nut"]
+    image: teknologist/webnut:latest
+    container_name: pi-nut-monitor
+    restart: unless-stopped
+    ports:
+      - "6543:6543"
+    environment:
+      NUT_HOST:   nut-upsd
+      NUT_PORT:   3493
+      NUT_USER:   ${NUT_UPSD_USER:-upsmon}
+      NUT_PASSWD: ${NUT_UPSD_PASSWORD}
+    depends_on:
+      - nut-upsd
+    networks:
+      - pi-network
 
   # ---------------------------------------------------------------------------
   # Watchtower Pi — MàJ auto des images Docker sur le Pi (nuit à 3h30)
@@ -141,9 +192,10 @@ services:
       - pi-network
 
 # =============================================================================
-volumes:
-  consume-pi:
-    driver: local
+# Note : pas de volume Docker nommé pour consume — bind mount sur l'hôte
+# Le dossier /opt/easy-ged-pi/consume est créé par install-pi.sh
+# Il est partagé entre pi-samba, pi-pusher et le service systemd ged-autoscan
+# =============================================================================
 
 networks:
   pi-network:

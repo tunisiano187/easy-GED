@@ -18,10 +18,15 @@
 |---|---|---|
 | 🖥️ **Serveur Mini PC** | Mini PC Ryzen 7430U/7530U, 16 Go RAM, **1 To NVMe** (viser 1 To intégré) | [Chercher →](https://www.amazon.fr/s?k=mini+pc+ryzen+7430U+16go+1to) |
 | 💾 **SSD 1 To** (si serveur livré en 512 Go) | Kingston NV2 ou NV3, M.2 NVMe 1 To | [Chercher →](https://www.amazon.fr/s?k=ssd+nvme+m2+1to+kingston) |
+| 🍓 **Raspberry Pi 5** (mode Split) | Raspberry Pi 5 — **8 Go RAM** recommandé (Pi 5 Model B 8GB) | [Voir →](https://www.amazon.fr/s?k=raspberry+pi+5+8go) |
+| 🔌 **Alimentation Pi 5** (mode Split) | Alimentation officielle 27 W USB-C (Raspberry Pi 27W Power Supply) — **obligatoire** pour le Pi 5 | [Voir →](https://www.amazon.fr/s?k=raspberry+pi+5+alimentation+27w+usb-c) |
+| 💳 **microSD Pi 5** (mode Split) | microSD 32 Go classe A2 minimum (ex: SanDisk Extreme 32 Go) | [Chercher →](https://www.amazon.fr/s?k=microsd+32go+classe+a2+sandisk) |
 | 📄 **Scanner (option WiFi/SMB)** | Fujitsu ScanSnap iX1300 — compact, pousse directement via SMB sans PC | [Voir →](https://www.amazon.fr/ScanSnap-iX1300-Document-Automatique-Standards/dp/B09HS7WRNX) |
 | 📄 **Scanner (option USB + Pi 5)** | Brother ADS-1200 — USB, ultra-compact, avaleur, compatible Linux/SANE | [Voir →](https://www.amazon.fr/Brother-ADS-1200-Documents-Portable-Plastifi%C3%A9es/dp/B07H3CTHF3) |
 
 > **💡 Conseil serveur :** Chercher un Mini PC avec le SSD **déjà en 1 To** — c'est souvent plus économique qu'acheter serveur + SSD séparément. Mots-clés : `mini pc ryzen 7430U 1to 16go`.
+
+> **💡 Raspberry Pi 5 (mode Split) :** Prendre le modèle **8 Go RAM** — le 4 Go peut être juste avec plusieurs conteneurs Docker actifs (pi-samba + pi-pusher + nut-upsd). L'alimentation officielle **27 W USB-C** est obligatoire : les alimentations génériques ne fournissent pas assez de courant et causent des instabilités. Ne pas oublier la microSD (32 Go min, classe A2).
 
 > **💡 Scanner :**
 > - **ScanSnap iX1300** : scanner WiFi/USB compact (format U-turn). Se connecte en SMB directement à la VM — aucun PC intermédiaire. Idéal si tu n'as pas de Pi 5.
@@ -197,12 +202,103 @@ SCANNER_SMB_PASSWORD=mdp_scanner    # mot de passe SMB que tu choisis
    - Mot de passe : valeur de `SCANNER_SMB_PASSWORD`
 4. Tester → un fichier doit apparaître dans Paperless automatiquement
 
-### Brother ADS-1800W
+### Scanner USB — Raspberry Pi 5 (Brother ADS-1200 ou DS-640)
 
-1. Accéder à l'interface web du scanner : `http://IP_SCANNER`
-2. Numériser → Vers réseau (SMB)
-3. Renseigner les mêmes infos que ci-dessus
-4. Sauvegarder → Tester depuis l'écran tactile du scanner
+Le service `ged-autoscan` gère deux types de scanners USB, chacun avec son mode de déclenchement.
+
+| Scanner | Mode | Déclenchement |
+|---|---|---|
+| **ADS-1200** (~270€) | `SCAN_TRIGGER=adf` | Insertion d'un doc dans l'ADF → scan immédiat |
+| **DS-640** (~70€) | `SCAN_TRIGGER=button` | Appui sur le bouton physique → scan de la feuille |
+
+#### Étape 1 — Installer le driver et le service
+
+```bash
+cd /opt/easy-ged-pi
+
+# Installe brscan5 + (optionnel) scanbd pour mode bouton
+sudo ./scanner/install-brscan5.sh
+
+# Copier le service systemd
+sudo cp scanner/autoscan.service /etc/systemd/system/ged-autoscan.service
+```
+
+> **💡 Si tu as utilisé `install-pi.sh`** : le script te propose déjà ces étapes.
+
+#### Étape 2 — Choisir le mode (ADS-1200 ou DS-640)
+
+Éditer `/etc/systemd/system/ged-autoscan.service` :
+
+```ini
+# Pour le Brother ADS-1200 (ADF multi-pages) :
+Environment=SCAN_TRIGGER=adf
+
+# Pour le Brother DS-640 (feuille à feuille, bouton) :
+Environment=SCAN_TRIGGER=button
+```
+
+#### Étape 3 — Activer et démarrer
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now ged-autoscan
+
+# Vérifier
+systemctl status ged-autoscan
+journalctl -u ged-autoscan -f
+```
+
+#### Étape 4 — Vérifier que le scanner est détecté
+
+```bash
+scanimage -L
+# → doit afficher :
+# device 'brother5:bus6;dev1' is a Brother ADS-1200 ...
+# ou
+# device 'brother5:bus6;dev2' is a Brother DS-640 ...
+```
+
+#### Étape 5 — Tester
+
+**Mode ADF (ADS-1200) :** insérer un document dans l'ADF → scan automatique en ~3s
+
+**Mode bouton (DS-640) :**
+1. Insérer la feuille dans le slot
+2. Appuyer sur le bouton "Scan" du scanner
+3. Le scan se lance automatiquement
+
+Dans les deux cas : le PDF apparaît dans `/opt/easy-ged-pi/consume/scan_YYYYMMDD_HHMMSS.pdf`, puis `pi-pusher` l'envoie à Paperless.
+
+#### Paramétrage avancé (optionnel)
+
+```ini
+# Dans /etc/systemd/system/ged-autoscan.service :
+Environment=SCAN_RESOLUTION=300    # DPI : 150, 300, 600
+Environment=SCAN_MODE=Color        # Color, Gray, Black & White
+Environment=SCAN_SOURCE=ADF        # ADF, ADF Duplex (mode adf uniquement)
+Environment=POLL_INTERVAL=3        # Intervalle scrutation en secondes (mode adf)
+```
+
+```bash
+sudo systemctl daemon-reload && sudo systemctl restart ged-autoscan
+```
+
+#### Troubleshooting scanner
+
+```bash
+# Scanner non détecté
+lsusb | grep -i brother        # Doit afficher le scanner
+scanimage -L                   # Doit lister le scanner SANE
+sudo udevadm control --reload-rules && sudo udevadm trigger
+
+# Logs en temps réel
+journalctl -u ged-autoscan -f
+
+# Tester un scan manuel (DS-640)
+scanimage --device-name="$(scanimage -L | grep -oP "(?<=')[^']+")" \
+  --mode=Color --resolution=300 --format=pdf -o /tmp/test.pdf \
+  && echo "✓ Scan OK" || echo "✗ Échec"
+```
 
 ---
 
@@ -430,42 +526,56 @@ Pour que le Pi envoie les fichiers à Paperless :
 
 ## 🔌 Monitoring UPS APC (NUT)
 
-> **Optionnel** — Requis uniquement si vous avez un onduleur APC et souhaitez monitorer son état.
+> **Optionnel** — Requis uniquement si tu as un onduleur APC branché physiquement sur le Pi 5.
 
-Le monitoring UPS via NUT nécessite un **accès USB physique** à l'onduleur.
-Il ne peut **pas** tourner dans la VM Proxmox sans USB passthrough.
+Le Pi 5 est le **serveur NUT** : l'UPS y est branché en USB, et il expose le monitoring sur le réseau (port 3493). Les autres machines (VM Proxmox, NAS Synology) se connectent en tant que **clients NUT**.
 
-**Déployer NUT sur un device avec USB physique** (Raspberry Pi 5, Mini PC host, etc.) :
+> ⚠️ NUT ne peut **pas** tourner dans la VM Proxmox sans USB passthrough — c'est pour ça qu'il tourne sur le Pi.
+
+### Démarrer le serveur NUT sur le Pi
 
 ```bash
-# Sur le device avec l'UPS branché en USB
-git clone https://github.com/tunisiano187/easy-GED /opt/easy-ged
-cd /opt/easy-ged
+cd /opt/easy-ged-pi
 
-# Identifier l'UPS : lsusb | grep -i apc
-# Copier et adapter la config NUT
-cp nut/ups.conf.example nut/ups.conf
-cp nut/upsd.users.example nut/upsd.users
-nano nut/upsd.users   # ← Changer CHANGER_CE_MOT_DE_PASSE
+# 1. Renseigner les variables NUT dans .env
+nano .env
+# Ajouter :
+#   NUT_UPSD_USER=upsmon
+#   NUT_UPSD_PASSWORD=<MOT_DE_PASSE>   ← définir ici
+#   NUT_UPS_NAME=apc
+#   NUT_UPS_DRIVER=usbhid-ups   # pour la plupart des APC USB
 
-# Renseigner le mot de passe dans .env
-echo "NUT_UPSD_PASSWORD=mon_mot_de_passe" >> .env
+# 2. Vérifier que l'UPS est détecté
+lsusb | grep -i apc
 
-# Lancer le stack NUT
-docker compose -f docker-compose.nut.yml up -d
+# 3. Lancer la stack Pi avec le profil NUT
+docker compose -f docker-compose.pi.yml --profile nut up -d
+
+# 4. Vérifier l'état de l'UPS
+docker exec pi-nut-upsd upsc apc@localhost
 ```
 
 **Accès :**
-- Interface web NUT : `http://IP_DEVICE:6543`
-- Serveur NUT (pour clients Proxmox/VMs) : `IP_DEVICE:3493`
+- Interface web NUT : `http://IP_PI:6543`
+- Serveur NUT (pour les clients) : `IP_PI:3493`
 
-**Configurer Proxmox pour utiliser le NUT distant :**
+### Configurer les clients NUT
+
+**Sur chaque nœud Proxmox :**
 ```bash
-# Sur chaque nœud Proxmox
-apt install nut-client -y
-# Configurer /etc/nut/upsmon.conf :
-# MONITOR apc@IP_DEVICE 1 upsmon MOT_DE_PASSE slave
+apt install -y nut-client
+
+# /etc/nut/upsmon.conf
+MONITOR apc@IP_PI 1 upsmon MOT_DE_PASSE slave
+
+# /etc/nut/nut.conf
+MODE=netclient
+
+systemctl restart nut-client
 ```
+
+**Sur le NAS Synology :**
+Panneau de configuration → Matériel et alimentation → UPS → UPS réseau → Adresse : `IP_PI`
 
 ---
 

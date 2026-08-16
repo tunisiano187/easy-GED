@@ -1,0 +1,63 @@
+# =============================================================================
+# easy-GED — Service systemd : Numérisation automatique scanner USB
+#
+# Deux modes disponibles via SCAN_TRIGGER :
+#   adf    → Brother ADS-1200 (ADF multi-pages, scrutation continue)
+#   button → Brother DS-640   (feuille à feuille, déclenchement bouton)
+#
+# Installation :
+#   sudo cp /opt/easy-ged-pi/scanner/autoscan.service /etc/systemd/system/ged-autoscan.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ged-autoscan
+#
+# Vérification :
+#   systemctl status ged-autoscan
+#   journalctl -u ged-autoscan -f
+#
+# Pour changer de mode :
+#   Éditer SCAN_TRIGGER ci-dessous → sudo systemctl restart ged-autoscan
+# =============================================================================
+
+[Unit]
+Description=easy-GED — Numérisation automatique scanner USB
+Documentation=https://github.com/tunisiano187/easy-GED
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+
+# ---------------------------------------------------------------------------
+# SCAN_TRIGGER : choisir le mode selon votre scanner
+#   adf    → Brother ADS-1200 (chargeur automatique, multi-pages)
+#   button → Brother DS-640   (feuille à feuille, bouton physique)
+# ---------------------------------------------------------------------------
+Environment=SCAN_TRIGGER=adf
+
+# Dossier de destination des scans — doit correspondre au bind mount /consume
+Environment=CONSUME_DIR=/opt/easy-ged-pi/consume
+
+# Paramètres communs (ajuster selon vos besoins)
+Environment=SCAN_RESOLUTION=300
+Environment=SCAN_MODE=Color
+
+# Paramètres mode ADF uniquement
+Environment=SCAN_SOURCE=ADF
+Environment=POLL_INTERVAL=3
+
+# Chemin vers la config scanbd (mode button uniquement)
+Environment=SCANBD_CONF=/opt/easy-ged-pi/scanner/scanbd.conf
+
+ExecStart=/opt/easy-ged-pi/scanner/autoscan.sh
+
+Restart=on-failure
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ged-autoscan
+
+[Install]
+WantedBy=multi-user.target
