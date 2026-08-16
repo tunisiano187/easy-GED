@@ -47,12 +47,13 @@ Priorité décroissante. L'agent traite ces items dans l'ordre lors de ses scans
       Le QR est inséré en base64 dans l'email de notification.
       → PR #5 mergée — `n8n/Dockerfile`, `docker-compose.yml`, `n8n/workflows/ged-main-workflow.json`
 
-- [ ] **Gotify / Ntfy — Notifications push mobiles** — Alternative auto-hébergée aux
-      notifications Telegram pour les alertes (coupure UPS, document urgent, rappel).
-      Ajouter le service Docker + configurer dans n8n + documenter dans README.
-      Choisir Ntfy (plus simple, client web + mobile).
-      → Fichiers : `docker-compose.yml` (nouveau service `ged-ntfy`), `.env.example`,
-        `n8n/workflows/ged-main-workflow.json` (nœud Ntfy)
+- [x] **Ntfy — Notifications push mobiles** — Serveur push auto-hébergé,
+      client web + app mobile Android/iOS (gratuit, open-source).
+      → En cours — feat/v2-ntfy
+      → Fichiers : `docker-compose.yml` (service `ged-ntfy`, port 8090), `.env.example`
+        (variables `NTFY_BASE_URL`, `NTFY_TOPIC_DOCUMENTS`, `NTFY_TOPIC_ALERTS`, `NTFY_ACCESS_TOKEN`),
+        `n8n/workflows/ged-main-workflow.json` (nœuds `Ntfy — Facture` + `Ntfy — Litige`),
+        `README.md` (guide configuration app mobile + token)
 
 ### P2 — Priorité moyenne
 

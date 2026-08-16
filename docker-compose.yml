@@ -172,6 +172,35 @@ services:
       start_period: 30s
 
   # ---------------------------------------------------------------------------
+  # Ntfy — Serveur de notifications push auto-hébergé
+  # Accessible sur http://IP_VM:8090 (interface web + abonnements)
+  # App mobile : https://ntfy.sh/#download (Android/iOS, gratuit)
+  # ---------------------------------------------------------------------------
+  ntfy:
+    image: binwiederhier/ntfy:latest
+    container_name: ged-ntfy
+    restart: unless-stopped
+    command: serve
+    environment:
+      TZ: ${PAPERLESS_TIME_ZONE:-Europe/Paris}
+      NTFY_BASE_URL: ${NTFY_BASE_URL:-http://localhost:8090}
+      NTFY_CACHE_FILE: /var/cache/ntfy/cache.db
+      NTFY_AUTH_FILE: /var/lib/ntfy/user.db
+      NTFY_AUTH_DEFAULT_ACCESS: deny-all
+    volumes:
+      - ntfy-cache:/var/cache/ntfy
+      - ntfy-data:/var/lib/ntfy
+    ports:
+      - "8090:80"
+    networks:
+      - ged-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --tries=1 http://localhost:80/v1/health -O- | grep -q 'ok'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
   # Samba — Partage SMB pour réception fichiers scanner
   # ---------------------------------------------------------------------------
   samba:
@@ -213,6 +242,7 @@ services:
       - paperless-ngx
       # n8n retiré des dépendances car il peut être externe (profil internal-n8n)
       - portainer
+      - ntfy
 
   # ---------------------------------------------------------------------------
   # Portainer CE — Interface web de gestion Docker
@@ -293,6 +323,10 @@ volumes:
   caddy-data:
     driver: local
   caddy-config:
+    driver: local
+  ntfy-cache:
+    driver: local
+  ntfy-data:
     driver: local
 
 # =============================================================================
