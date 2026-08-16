@@ -252,6 +252,20 @@ Configuration PBS recommandée :
 - Schedule : `daily` à 04:00
 - Rétention : `keep-daily=7, keep-weekly=4, keep-monthly=3`
 
+## Règles Git & PRs — OBLIGATOIRES
+
+> Ces règles s'appliquent à tous les agents IA travaillant sur ce projet.
+> Les violer est une erreur — corriger avant de continuer.
+
+- **1 PR = 1 raison unique** : ne jamais mélanger des sujets différents dans une même PR.
+  Exemples de raisons distinctes : une feature, un bugfix, une mise à jour de doc,
+  un nouveau fichier de config, une mise à jour de dépendance.
+- **Maximum 2 PRs ouvertes simultanément** : attendre qu'une PR soit mergée ou fermée
+  avant d'en ouvrir une troisième.
+- **Jamais de push direct sur `main`** : toujours passer par une branche + PR.
+- **Branche nommée selon le sujet** : `feat/<sujet>`, `fix/<sujet>`, `docs/<sujet>`.
+- **Ne pas réutiliser une PR mergée** : créer une nouvelle PR pour chaque nouveau sujet.
+
 ## Contraintes & Scope
 
 - HTTPS local via Caddy (`local_certs`, domaines `.home.local`)
