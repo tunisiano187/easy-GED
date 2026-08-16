@@ -2,8 +2,9 @@
 
 > Scannez un courrier, il est analysé, classé et vous alertez automatiquement. 100% local, zéro cloud.
 
-**Stack :** Paperless-ngx · n8n · Ollama (Mistral 7B) · PostgreSQL · Caddy · Docker  
-**Hébergement :** VM Debian/Ubuntu sur Proxmox · Sauvegardes Proxmox PBS
+**Stack :** Paperless-ngx · n8n · Ollama (Mistral 7B) · PostgreSQL · Caddy · Cloudflare Tunnel · Docker  
+**Hébergement :** VM Debian/Ubuntu sur Proxmox · Sauvegardes Proxmox PBS  
+**Modes :** All-in-one (VM seule) ou Split (Pi 5 scanner + VM GED)
 
 ---
 
@@ -77,7 +78,8 @@ Le script fera tout automatiquement :
 4. ✅ Démarre tous les conteneurs (dont Caddy HTTPS)
 5. ✅ Télécharge Mistral 7B (~4.1 Go)
 6. ✅ Crée les champs personnalisés Paperless
-7. ✅ Affiche les URLs d'accès HTTP et HTTPS
+7. ✅ Configure les mises à jour automatiques (OS + projet)
+8. ✅ Affiche les URLs d'accès HTTP et HTTPS
 
 ---
 
@@ -272,6 +274,30 @@ docker compose up -d paperless-ngx
 # → Directement dans l'interface Paperless (champ "statut_paiement")
 ```
 
+### Mises à jour automatiques
+
+Le système se met à jour à trois niveaux :
+
+| Niveau | Mécanisme | Fréquence |
+|---|---|---|
+| 🐳 Images Docker | Watchtower (inclus dans stack) | Toutes les nuits 3h00 |
+| 📦 Projet (git) | Cron → `scripts/update.sh` | Dimanche 3h00 |
+| 🔒 OS sécurité | `unattended-upgrades` | Quotidien |
+
+Mise à jour manuelle :
+```bash
+# Tout mettre à jour maintenant
+sudo /opt/easy-ged/scripts/update.sh
+
+# Projet uniquement
+sudo /opt/easy-ged/scripts/update.sh --project-only
+
+# OS uniquement
+sudo /opt/easy-ged/scripts/update.sh --os-only
+```
+
+---
+
 ### Sauvegardes (Proxmox PBS)
 
 Les sauvegardes sont gérées par **Proxmox Backup Server** — elles couvrent la VM entière :
@@ -308,14 +334,93 @@ Les sauvegardes sont gérées par **Proxmox Backup Server** — elles couvrent l
 - Détection rappels abusifs / litiges
 - Sauvegardes via Proxmox PBS (niveau VM)
 - HTTPS local avec Caddy (`*.home.local`, certificats auto-signés)
+- Accès externe via Cloudflare Tunnel (profil Docker optionnel)
 - Bilan mensuel automatique (cron n8n, 1er du mois à 8h)
+- Mode split Pi 5 + VM (architecture modulaire)
+- Mises à jour automatiques (OS + projet + Docker via Watchtower)
 
 ### v2 (prévue)
-- [ ] Accès externe sécurisé via Tailscale
-- [ ] Amélioration OCR avec Surya/Docling (meilleure précision sur documents complexes)
 - [ ] QR Code EPC généré localement (sans appel externe)
+- [ ] Amélioration OCR avec Surya/Docling (meilleure précision documents complexes)
 - [ ] Dashboard budget Grafana (visualisation des dépenses)
 - [ ] Notification push mobile (Gotify ou Ntfy auto-hébergé)
+- [ ] Multi-utilisateurs Paperless (famille / PME)
+
+---
+
+## ☁️ Accès Externe via Cloudflare Tunnel (optionnel)
+
+> Accès HTTPS sécurisé depuis l'extérieur, sans ouvrir de ports sur votre box.
+
+**Prérequis :** Compte Cloudflare gratuit + un domaine géré par Cloudflare.
+
+### Configurer le tunnel
+
+1. Se connecter sur [one.dash.cloudflare.com](https://one.dash.cloudflare.com/)
+2. Aller dans **Networks → Tunnels → Create a tunnel**
+3. Choisir **Cloudflared** → Donner un nom (ex: `easy-ged-home`)
+4. Copier le **token** affiché
+5. Dans le fichier `.env`, décommenter et renseigner :
+   ```
+   CLOUDFLARE_TUNNEL_TOKEN=eyJhIjoiXXXX...
+   ```
+6. Dans le tunnel, configurer les **Public Hostnames** :
+   - `paperless.ton-domaine.com` → Service: `http://paperless-ngx:8000`
+   - `n8n.ton-domaine.com` → Service: `http://n8n:5678`
+   - `portainer.ton-domaine.com` → Service: `http://portainer:9000`
+   - ⚠️ **Ne pas exposer Ollama** (11434) — usage interne uniquement
+
+### Démarrer avec Cloudflare
+
+```bash
+# Démarrer la stack avec le tunnel Cloudflare
+docker compose --profile cloudflare up -d
+
+# Vérifier que cloudflared est connecté
+docker compose logs ged-cloudflared
+```
+
+---
+
+## 🍓 Raspberry Pi 5 — Mode Split (optionnel)
+
+> Le Pi 5 gère la réception des scans, la VM Proxmox gère l'analyse IA et le stockage.
+
+### Pourquoi le mode split ?
+
+| Avantage | Détail |
+|---|---|
+| Scanner dédié | Le Pi est toujours allumé pour recevoir les scans |
+| UPS possible | Le Pi peut monitorer l'UPS APC en USB |
+| VM moins sollicitée | La VM ne gère que l'IA et la GED |
+
+### Activer le mode split
+
+Dans `.env` :
+```bash
+DEPLOY_MODE=split
+PI5_HOST=192.168.1.XX
+```
+
+### Installer la stack Pi
+
+```bash
+# Sur le Raspberry Pi 5 (Raspberry Pi OS Lite 64-bit)
+curl -sSL https://raw.githubusercontent.com/tunisiano187/easy-GED/main/scripts/install-pi.sh | sudo bash
+```
+
+Le script installe sur le Pi :
+- **Samba** — réception fichiers scanner (`\\IP_PI\consume`)
+- **Pi Pusher** — transfert automatique vers Paperless via API REST
+- **Watchtower Pi** — mises à jour Docker du Pi
+- **Mises à jour automatiques** — cron hebdomadaire (dimanche 3h30)
+
+### Créer le token API Paperless
+
+Pour que le Pi envoie les fichiers à Paperless :
+1. Dans Paperless : **Paramètres → Tokens API → Ajouter**
+2. Donner un nom (ex: `pi5-pusher`)
+3. Copier le token dans `.env` du Pi : `PAPERLESS_API_TOKEN=xxx`
 
 ---
 

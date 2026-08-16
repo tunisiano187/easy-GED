@@ -11,6 +11,9 @@
 ```
 VM_IP=192.168.1.XX           # IP de ta VM Debian/Ubuntu sur Proxmox
 VM_USER=root                 # ou ton user sudo
+DEPLOY_MODE=all-in-one       # ou "split" si tu as un Raspberry Pi 5
+PI5_IP=192.168.1.XX          # IP du Pi 5 (uniquement si DEPLOY_MODE=split)
+CLOUDFLARE=false             # true si tu veux activer Cloudflare Tunnel
 REPO_URL=https://github.com/tunisiano187/easy-GED
 ```
 
@@ -22,14 +25,33 @@ REPO_URL=https://github.com/tunisiano187/easy-GED
 Tu es un agent DevOps expert. Ta mission est de déployer le système easy-GED
 (GED privée auto-hébergée) sur ma VM Linux en suivant exactement ce plan.
 
+## Directives d'exécution
+
+- Utilise des sous-agents pour toutes les tâches pouvant s'exécuter en parallèle
+  (ex: déploiement VM + Pi simultané, tests de validation en parallèle)
+- Chaque sous-agent doit avoir un objectif précis et rapporter son statut
+- Si un sous-agent échoue, stopper et rapporter avant de continuer
+- Pour les commandes longues (docker pull, modèle Mistral), lancer en arrière-plan
+  et vérifier la fin avant de passer à l'étape suivante
+
 ## Contexte
 
 Système : VM Debian/Ubuntu AMD64 sur Proxmox
 IP de la VM : [REMPLACER PAR L'IP]
 Utilisateur SSH : [REMPLACER PAR LE USER]
+Mode déploiement : [all-in-one OU split]
+Cloudflare Tunnel : [oui/non]
 Dépôt : https://github.com/tunisiano187/easy-GED
 
 ## Étapes à exécuter dans l'ordre
+
+## Étapes à exécuter dans l'ordre
+
+### ÉTAPE 0 — Lecture du contexte (obligatoire)
+Lire le fichier CLAUDE.md dans le dépôt pour avoir le contexte complet du projet.
+Adapter le plan d'exécution en fonction du DEPLOY_MODE choisi :
+- all-in-one : exécuter ÉTAPES 1-13 sur la VM uniquement
+- split : lancer ÉTAPES 1-13 sur VM et ÉTAPE 14 (Pi 5) en parallèle via sous-agents
 
 ### ÉTAPE 1 — Vérification système
 - Vérifier que le système est bien Debian/Ubuntu AMD64
@@ -62,6 +84,9 @@ Dépôt : https://github.com/tunisiano187/easy-GED
   - SCANNER_SMB_USER, SCANNER_SMB_PASSWORD (identifiants scanner)
   - PAPERLESS_URL (http://IP_VM:8000 - IP de la VM)
   - N8N_WEBHOOK_BASE_URL (http://IP_VM:5678)
+  - DEPLOY_MODE (all-in-one ou split)
+  - Si DEPLOY_MODE=split : PI5_HOST, PI5_SSH_USER
+  - Si Cloudflare voulu : CLOUDFLARE_TUNNEL_TOKEN
 
 ### ÉTAPE 5 — Rendre les scripts exécutables
 chmod +x scripts/*.sh
@@ -71,6 +96,9 @@ chmod +x paperless/scripts/*.sh
 ### ÉTAPE 6 — Démarrer la stack Docker
 docker compose pull
 docker compose up -d
+
+# Si Cloudflare Tunnel activé :
+# docker compose --profile cloudflare up -d
 
 Attendre que tous les services soient healthy (max 5 minutes) :
 docker compose ps
@@ -146,6 +174,20 @@ TEST 6 : Partage SMB scanner accessible
   smbclient -L localhost -U [SCANNER_SMB_USER]%[SCANNER_SMB_PASSWORD] -N 2>/dev/null | grep consume
   → Attendu : ligne avec "consume"
 
+### ÉTAPE 14 — Déploiement Pi 5 (uniquement si DEPLOY_MODE=split)
+⚡ Lancer en parallèle avec les ÉTAPES 7-12 via un sous-agent dédié.
+
+Sous-agent Pi 5 (SSH vers PI5_HOST) :
+- Vérifier que le Pi 5 est accessible : ssh PI5_SSH_USER@PI5_HOST
+- Lancer le script d'installation :
+  curl -sSL https://raw.githubusercontent.com/tunisiano187/easy-GED/main/scripts/install-pi.sh | sudo bash
+- Configurer le .env sur le Pi :
+  - PAPERLESS_URL=http://IP_VM:8000
+  - PAPERLESS_API_TOKEN=[token créé dans Paperless à l'ÉTAPE 8]
+  - SCANNER_SMB_USER / SCANNER_SMB_PASSWORD
+- Vérifier le statut : docker compose -f docker-compose.pi.yml ps
+- Tester : déposer un fichier test dans \\PI5_IP\consume → vérifier dans Paperless
+
 ### ÉTAPE 13 — Rapport final
 Afficher un résumé avec :
 - ✓/✗ pour chaque test
@@ -159,6 +201,22 @@ Afficher un résumé avec :
   1. Configurer le scanner (voir README.md section "Configuration Scanner")
   2. Importer le workflow n8n manuellement via l'interface web
   3. Tester avec un premier document
+
+## Utilisation des sous-agents
+
+L'agent principal doit déléguer les tâches suivantes à des sous-agents :
+
+| Tâche | Sous-agent | Parallèle avec |
+|---|---|---|
+| Déploiement Pi 5 (si split) | `sous-agent-pi` | ÉTAPES 7-12 VM |
+| Tests de validation | `sous-agent-tests` | après ÉTAPE 12 |
+| Configuration Cloudflare (si activé) | `sous-agent-cf` | après stack up |
+
+Instructions pour les sous-agents :
+- Chaque sous-agent reçoit son contexte complet (IP, credentials, objectif)
+- Il rapporte : succès ✓ / échec ✗ / avertissement ⚠ pour chaque test
+- En cas d'échec, il inclut les logs complets pour diagnostic
+- L'agent principal attend la completion de tous les sous-agents avant le rapport final
 
 ## En cas d'erreur
 
@@ -177,6 +235,9 @@ Afficher un résumé avec :
 ---
 
 ## 🔧 Utilisation avec Claude Code (recommandé)
+
+Claude Code supporte nativement les sous-agents — en mode split, il déploiera
+la VM et le Pi 5 en parallèle automatiquement.
 
 Si tu utilises **Claude Code** avec accès SSH à la VM :
 

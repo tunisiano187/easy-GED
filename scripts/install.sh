@@ -63,8 +63,16 @@ echo ""
 info "Mise à jour des paquets système..."
 apt-get update -qq
 apt-get upgrade -y -qq
-apt-get install -y -qq curl git python3 jq ca-certificates gnupg lsb-release
+apt-get install -y -qq curl git python3 jq ca-certificates gnupg lsb-release unattended-upgrades
 success "Paquets système installés"
+
+# Activer les mises à jour automatiques de sécurité OS
+cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+EOF
+success "Mises à jour automatiques de sécurité OS activées (unattended-upgrades)"
 
 # --- Installation Docker ---
 echo ""
@@ -198,14 +206,24 @@ source <(grep -v '^#' .env | grep -v '^$')
     "${PAPERLESS_ADMIN_USER:-admin}" \
     "$PAPERLESS_ADMIN_PASSWORD"
 
+# --- Mises à jour automatiques du projet ---
+echo ""
+info "Configuration des mises à jour automatiques du projet..."
+chmod +x "$INSTALL_DIR/scripts/update.sh"
+cat > /etc/cron.d/easy-ged-update << EOF
+# easy-GED — Mise à jour hebdomadaire du projet + images Docker (dimanche 3h00)
+0 3 * * 0  root  INSTALL_DIR=/opt/easy-ged /opt/easy-ged/scripts/update.sh --project-only >> /var/log/easy-ged-update.log 2>&1
+EOF
+chmod 644 /etc/cron.d/easy-ged-update
+success "Mise à jour automatique configurée (dimanche 3h00)"
+info "Note : Les images Docker sont mises à jour par Watchtower (nuit à 3h00)"
+info "Note : L'OS est mis à jour par unattended-upgrades (quotidien)"
+
 # --- Sauvegardes ---
 echo ""
 info "Sauvegardes : gérées par Proxmox Backup Server (PBS)"
-echo ""
-echo "  Les sauvegardes sont configurées côté Proxmox (PBS)."
-echo "  Elles incluent l'intégralité de la VM (disques + config)."
-echo "  Aucune configuration supplémentaire requise ici."
-echo "  → Voir le README pour configurer le job PBS dans l'UI Proxmox."
+echo "  → Configurer le job PBS dans Proxmox UI : Datacenter → Backup → Add"
+echo "  → Schedule recommandé : daily 04:00, rétention : keep-daily=7"
 
 # --- Rapport final ---
 VM_IP=$(hostname -I | awk '{print $1}')

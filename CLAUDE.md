@@ -16,34 +16,52 @@ Elle automatise la numérisation, l'analyse IA et le classement des courriers et
 |---|---|
 | Serveur | Mini PC AMD Ryzen 7330U, 16 Go RAM, 1 To NVMe (à acheter) |
 | Virtualisation | Proxmox VE — VM Debian/Ubuntu AMD64 dédiée GED (8 vCPUs, 12 Go RAM) |
+| Raspberry Pi 5 | 8 Go RAM — réception scanner + monitoring UPS (mode split optionnel) |
 | NAS | Synology basique (DS220j/DS223) — stockage réseau si besoin |
 | Scanner | ScanSnap iX1300 ou Brother ADS-1800W (à acheter) |
 | Sauvegardes | Proxmox Backup Server (PBS) — snapshots VM quotidiens |
-| UPS | APC (optionnel) — monitoring via NUT sur device avec USB physique |
+| UPS | APC (optionnel) — monitoring via NUT (Pi 5 ou Proxmox host) |
+
+## Modes de Déploiement
+
+### Mode `all-in-one` (défaut)
+Tout tourne sur la VM Proxmox — plus simple, recommandé pour débuter.
+
+### Mode `split`
+- **Raspberry Pi 5** : Samba (réception scanner) + Pi Pusher (envoi API Paperless) + NUT (optionnel)
+- **VM Proxmox** : Paperless-ngx + n8n + Ollama + PostgreSQL + Redis + Caddy
+
+Le choix se fait via `DEPLOY_MODE` dans `.env`.
 
 ## Architecture
 
 ```
+[Mode all-in-one]
 Scanner ──SMB──► Samba ──► /consume ──► Paperless-ngx (OCR Tesseract FR)
-Email IMAP (opt) ───────────────────────►         │
-                                                   │ webhook POST
-                                                   ▼
-                                             n8n Workflow
-                                         ┌────────┼────────┐
-                                         ▼        ▼        ▼
-                                      Ollama  Paperless PostgreSQL
-                                    Mistral 7B  API       historique
-                                         │
-                             ┌───────────┴───────────┐
-                             ▼                       ▼
-                         facture               rappel reçu
-                      Tag "À Payer"        vérifie si payée
-                      alerte échéance     → alerte litige si oui
-                             │
-                    Email + Telegram + QR Code EPC
 
-Caddy ──HTTPS──► paperless.home.local / n8n.home.local / portainer.home.local
-Proxmox PBS ◄── Snapshots VM quotidiens (sauvegardes niveau VM)
+[Mode split]
+Scanner ──SMB──► Pi 5 Samba ──► pi-pusher ──► Paperless API POST
+
+Email IMAP (opt) ─────────────────────────────────────►│
+                                                        │ webhook POST
+                                                        ▼
+                                                  n8n Workflow
+                                              ┌────────┼────────┐
+                                              ▼        ▼        ▼
+                                           Ollama  Paperless PostgreSQL
+                                         Mistral 7B  MAJ       historique
+                                              │
+                                  ┌───────────┴───────────┐
+                                  ▼                       ▼
+                           facture reçue           rappel reçu
+                           Tag "À Payer"        vérif. si payée
+                           alerte échéance     → alerte litige si oui
+                                  │
+                        Email + Telegram + QR Code EPC
+
+Caddy ──HTTPS local──► *.home.local (auto-signed certs)
+Cloudflare Tunnel (opt) ──HTTPS externe──► paperless|n8n|portainer.domaine.com
+Proxmox PBS ◄── Snapshots VM quotidiens
 ```
 
 ## Stack Docker Compose
@@ -57,19 +75,24 @@ Proxmox PBS ◄── Snapshots VM quotidiens (sauvegardes niveau VM)
 | `ged-paperless` | paperless-ngx:latest | 8000 | GED + OCR |
 | `ged-n8n` | n8nio/n8n:latest | 5678 | Orchestration workflows |
 | `ged-ollama` | ollama/ollama:latest | 11434 | IA locale Mistral 7B |
-| `ged-samba` | dperson/samba:latest | 445 | Réception fichiers scanner |
+| `ged-samba` | dperson/samba:latest | 445 | Réception scanner (mode all-in-one) |
 | `ged-caddy` | caddy:2-alpine | 80/443 | Reverse proxy HTTPS local |
+| `ged-cloudflared` | cloudflare/cloudflared | — | Tunnel externe (profil cloudflare) |
 | `ged-portainer` | portainer/portainer-ce | 9000 | Gestion Docker (UI) |
-| `ged-watchtower` | containrrr/watchtower | — | MàJ auto images Docker |
+| `ged-watchtower` | containrrr/watchtower | — | MàJ auto images Docker (3h00) |
 
-### docker-compose.nut.yml (device avec USB physique — séparé)
+### docker-compose.pi.yml (Raspberry Pi 5 — mode split)
 
 | Conteneur | Image | Port | Rôle |
 |---|---|---|---|
-| `nut-upsd` | instantlinux/nut-upsd | 3493 | Serveur NUT (USB APC) |
-| `nut-monitor` | teknologist/webnut | 6543 | Interface web monitoring |
+| `pi-samba` | dperson/samba | 445 | Réception scanner SMB |
+| `pi-pusher` | alpine:3.19 | — | inotify → POST Paperless API |
+| `pi-watchtower` | containrrr/watchtower | — | MàJ auto images Docker Pi |
+| `nut-upsd` (opt) | instantlinux/nut-upsd | 3493 | Serveur NUT (USB APC) |
+| `nut-monitor` (opt) | teknologist/webnut | 6543 | Interface web NUT |
 
-> ⚠️ NUT doit tourner sur un device avec accès USB physique à l'UPS (pas dans la VM GED).
+### docker-compose.nut.yml (device avec USB physique — séparé)
+Identique à la partie NUT du docker-compose.pi.yml, pour un usage sur Proxmox host ou autre device.
 
 ## Structure des Fichiers
 
@@ -78,6 +101,7 @@ easy-GED/
 ├── CLAUDE.md                          ← Ce fichier (contexte agent IA)
 ├── AGENT-DEPLOY.md                    ← Prompt de déploiement pour agent IA
 ├── docker-compose.yml                 ← Stack principale (VM GED)
+├── docker-compose.pi.yml              ← Stack Pi 5 (mode split)
 ├── docker-compose.nut.yml             ← Stack NUT/UPS (device séparé)
 ├── .env.example                       ← Template de configuration
 ├── .env                               ← (gitignore) Configuration réelle
@@ -90,7 +114,8 @@ easy-GED/
 │   └── upsd.users.example             ← Utilisateurs NUT (template)
 ├── paperless/
 │   ├── scripts/
-│   │   └── notify-n8n.sh             ← Script post-consume → webhook n8n
+│   │   ├── notify-n8n.sh             ← Script post-consume → webhook n8n
+│   │   └── push-to-paperless.sh      ← Pi → Paperless API (mode split)
 │   └── init/
 │       └── create-custom-fields.sh   ← Crée les 7 champs personnalisés
 ├── n8n/
@@ -103,8 +128,10 @@ easy-GED/
 ├── postgres/
 │   └── init-n8n-db.sql              ← Création base n8n au démarrage
 └── scripts/
-    ├── install.sh                    ← Installation complète one-shot
-    └── pull-model.sh                 ← Télécharge Mistral 7B
+    ├── install.sh                    ← Installation VM one-shot
+    ├── install-pi.sh                 ← Installation Pi 5 one-shot
+    ├── pull-model.sh                 ← Télécharge Mistral 7B
+    └── update.sh                     ← Mise à jour projet + OS + Docker
 ```
 
 ## Champs Personnalisés Paperless
@@ -150,9 +177,11 @@ Voir `.env.example` pour toutes les variables. Les indispensables :
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
 - `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`
 - `SCANNER_SMB_USER`, `SCANNER_SMB_PASSWORD`
+- `DEPLOY_MODE` : `all-in-one` (défaut) ou `split`
 
 Variables optionnelles :
-- Section `[CADDY]` : domaines `.home.local` (si override nécessaire)
+- `PAPERLESS_API_TOKEN` : pour le Pi Pusher (mode split)
+- `CLOUDFLARE_TUNNEL_TOKEN` : accès externe HTTPS
 - Section `[NUT]` : `NUT_UPSD_PASSWORD`, `NUT_UPS_NAME`, `NUT_SERVER_HOST`
 
 ## Commandes Utiles
@@ -160,6 +189,12 @@ Variables optionnelles :
 ```bash
 # Démarrer la stack principale
 docker compose up -d
+
+# Démarrer avec Cloudflare Tunnel
+docker compose --profile cloudflare up -d
+
+# Démarrer la stack Pi 5 (sur le Pi)
+docker compose -f docker-compose.pi.yml up -d
 
 # Voir les logs
 docker compose logs -f
@@ -173,8 +208,8 @@ docker compose ps
 # Créer les champs Paperless
 ./paperless/init/create-custom-fields.sh
 
-# Stack NUT (sur le device avec UPS)
-docker compose -f docker-compose.nut.yml up -d
+# Mise à jour complète
+sudo ./scripts/update.sh
 
 # Accès aux interfaces (HTTP direct)
 # Paperless  : http://IP_VM:8000
@@ -197,6 +232,16 @@ docker compose -f docker-compose.nut.yml up -d
 5. Copier un PDF dans le dossier consume → il doit apparaître dans Paperless avec les champs remplis
 6. Vérifier notification Telegram reçue
 7. Test litige : scanner un rappel pour une facture déjà marquée "Payée"
+8. (Mode split) Déposer un fichier dans `\\IP_PI\consume` → vérifier dans Paperless
+
+## Mises à jour automatiques
+
+| Niveau | Mécanisme | Fréquence |
+|---|---|---|
+| Images Docker (VM) | Watchtower | Nuit à 3h00 |
+| Images Docker (Pi) | pi-watchtower | Nuit à 3h30 |
+| Projet Git | Cron → `scripts/update.sh` | Dimanche 3h00 |
+| OS sécurité | `unattended-upgrades` | Quotidien |
 
 ## Sauvegardes
 
@@ -210,7 +255,8 @@ Configuration PBS recommandée :
 ## Contraintes & Scope
 
 - HTTPS local via Caddy (`local_certs`, domaines `.home.local`)
-- Accès distant : utiliser **Tailscale** (VPN mesh gratuit)
+- Accès externe : **Cloudflare Tunnel** (profil Docker `cloudflare`) ou Tailscale
 - NUT doit tourner sur un device avec **USB physique** vers l'UPS
-- Configuration scanner : manuelle sur l'interface web du scanner (SMB → IP_VM port 445)
+- Configuration scanner : manuelle sur l'interface web du scanner (SMB → IP_VM ou IP_PI port 445)
 - Modèle Ollama : téléchargement initial ~4.1 Go requis
+- Ne jamais exposer Ollama (11434) via Cloudflare Tunnel

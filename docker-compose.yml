@@ -219,6 +219,27 @@ services:
       - ged-network
 
   # ---------------------------------------------------------------------------
+  # Cloudflare Tunnel — Accès externe HTTPS sécurisé (optionnel)
+  # Active avec : docker compose --profile cloudflare up -d
+  # Configurer les routes dans le dashboard Cloudflare Zero Trust
+  # Ne pas exposer Ollama via Cloudflare (usage interne uniquement)
+  # ---------------------------------------------------------------------------
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: ged-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    networks:
+      - ged-network
+    profiles:
+      - cloudflare
+    depends_on:
+      - paperless-ngx
+      - n8n
+
+  # ---------------------------------------------------------------------------
   # Watchtower — Mises à jour automatiques des images Docker (nuit à 3h00)
   # ---------------------------------------------------------------------------
   watchtower:
