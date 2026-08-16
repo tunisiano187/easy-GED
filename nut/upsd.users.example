@@ -1,0 +1,15 @@
+# =============================================================================
+# NUT — Utilisateurs autorisés à se connecter au serveur NUT
+# Copier en upsd.users et adapter
+# =============================================================================
+
+# Utilisateur de monitoring (lecture seule) — utilisé par les clients NUT
+[upsmon]
+  password = CHANGER_CE_MOT_DE_PASSE
+  upsmon primary
+
+# Utilisateur admin (si besoin de commandes)
+# [admin]
+#   password = CHANGER_CE_MOT_DE_PASSE_ADMIN
+#   actions = SET
+#   instcmds = ALL

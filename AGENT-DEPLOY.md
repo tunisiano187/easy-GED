@@ -59,8 +59,6 @@ Dépôt : https://github.com/tunisiano187/easy-GED
   - POSTGRES_PASSWORD (mot de passe base de données)
   - SMTP_HOST, SMTP_USER, SMTP_PASSWORD (email pour notifications)
   - TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (notifications Telegram)
-  - NAS_SMB_HOST, NAS_SMB_SHARE, NAS_SMB_USER, NAS_SMB_PASSWORD (backup NAS)
-  - RESTIC_PASSWORD (chiffrement sauvegardes - À NE PAS PERDRE)
   - SCANNER_SMB_USER, SCANNER_SMB_PASSWORD (identifiants scanner)
   - PAPERLESS_URL (http://IP_VM:8000 - IP de la VM)
   - N8N_WEBHOOK_BASE_URL (http://IP_VM:5678)
@@ -93,12 +91,12 @@ Attendre 30 secondes que Paperless soit complètement initialisé, puis :
 Vérifier que les 7 champs sont créés :
 emetteur, numero_facture, montant_total, date_echeance, iban, communication, statut_paiement
 
-### ÉTAPE 9 — Importer le workflow n8n
+### ÉTAPE 9 — Importer les workflows n8n
 - Ouvrir n8n sur http://IP_VM:5678
 - Aller dans Workflows → Import from File
-- Importer le fichier : n8n/workflows/ged-main-workflow.json
-- Activer le workflow (toggle ON)
-- Copier l'URL du webhook Paperless affiché dans le nœud "Webhook Trigger"
+- Importer le fichier : n8n/workflows/ged-main-workflow.json → Activer (toggle ON)
+- Importer le fichier : n8n/workflows/ged-budget-mensuel.json → Activer (toggle ON)
+- Copier l'URL du webhook affiché dans le nœud "Webhook Trigger" du workflow principal
 
 ### ÉTAPE 10 — Configurer le webhook Paperless → n8n
 Dans le fichier .env, vérifier que PAPERLESS_URL est correct, puis :
@@ -106,22 +104,24 @@ docker compose restart paperless-ngx
 
 Le script notify-n8n.sh appellera automatiquement n8n après chaque document ingéré.
 
-### ÉTAPE 11 — Configurer les sauvegardes automatiques
-Installer restic : apt install restic -y
+### ÉTAPE 11 — Sauvegardes (Proxmox PBS)
+Les sauvegardes sont gérées par **Proxmox Backup Server (PBS)** au niveau VM.
+Aucune configuration requise sur la VM elle-même.
 
-Ajouter le cron de sauvegarde (4h00 chaque nuit) :
-echo "0 4 * * * root /opt/easy-ged/scripts/backup.sh >> /var/log/easy-ged-backup.log 2>&1" > /etc/cron.d/easy-ged-backup
-chmod 644 /etc/cron.d/easy-ged-backup
+Informer l'utilisateur qu'il doit configurer un job PBS depuis l'interface Proxmox :
+- Datacenter → Backup → Add
+- Choisir le nœud, la VM easy-GED (ID 100 ou autre)
+- Schedule recommandé : daily à 04:00
+- Rétention : keep-daily=7, keep-weekly=4
 
-Installer cifs-utils pour le montage NAS :
-apt install cifs-utils -y
+Vérifier que le PBS est accessible depuis le cluster Proxmox avant de clore le déploiement.
 
 ### ÉTAPE 12 — Tests de validation
 Exécuter ces tests et rapporter le résultat de chacun :
 
 TEST 1 : Tous les conteneurs sont healthy
   docker compose ps | grep -E "(healthy|running)"
-  → Attendu : 8 lignes (tous les services)
+  → Attendu : 9 lignes (tous les services dont Caddy)
 
 TEST 2 : Paperless accessible
   curl -s -o /dev/null -w "%{http_code}" http://localhost:8000
@@ -154,6 +154,7 @@ Afficher un résumé avec :
   - n8n : http://[IP_VM]:5678
   - Portainer : http://[IP_VM]:9000
   - Ollama : http://[IP_VM]:11434
+  - (HTTPS) paperless.home.local / n8n.home.local / portainer.home.local (via Caddy)
 - Prochaines étapes manuelles restantes :
   1. Configurer le scanner (voir README.md section "Configuration Scanner")
   2. Importer le workflow n8n manuellement via l'interface web
@@ -169,8 +170,8 @@ Afficher un résumé avec :
 ## Important
 
 - Ne jamais committer le fichier .env dans git
-- Le mot de passe RESTIC_PASSWORD est CRITIQUE : le noter dans un gestionnaire de mots de passe
 - En cas de redémarrage VM : docker compose up -d suffit (restart: unless-stopped est configuré)
+- Les sauvegardes sont entièrement gérées par Proxmox PBS — aucun script local nécessaire
 ```
 
 ---
@@ -203,6 +204,5 @@ Pour que le déploiement soit entièrement non-interactif, prépare ces informat
 - [ ] Mots de passe à définir : Paperless admin, PostgreSQL, n8n
 - [ ] Credentials SMTP (email pour notifications)
 - [ ] Token bot Telegram + Chat ID
-- [ ] IP + identifiants NAS Synology (dossier de backup)
 - [ ] Identifiants SMB scanner (tu les choisiras toi-même)
-- [ ] Mot de passe Restic (chiffrement backup — à noter précieusement)
+- [ ] PBS configuré sur le cluster Proxmox (sauvegardes VM)

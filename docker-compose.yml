@@ -64,7 +64,7 @@ services:
       PAPERLESS_ADMIN_USER: ${PAPERLESS_ADMIN_USER:-admin}
       PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD}
       PAPERLESS_ADMIN_MAIL: ${PAPERLESS_ADMIN_MAIL:-admin@example.com}
-      # Surveillance email IMAP (optionnel)
+      # Surveillance email IMAP (optionnel — décommenter dans .env)
       PAPERLESS_EMAIL_HOST: ${PAPERLESS_EMAIL_HOST:-}
       PAPERLESS_EMAIL_PORT: ${PAPERLESS_EMAIL_PORT:-993}
       PAPERLESS_EMAIL_HOST_USER: ${PAPERLESS_EMAIL_HOST_USER:-}
@@ -105,25 +105,21 @@ services:
     ports:
       - "5678:5678"
     environment:
-      # Base de données n8n (base séparée dans le même PostgreSQL)
       DB_TYPE: postgresdb
       DB_POSTGRESDB_HOST: paperless-db
       DB_POSTGRESDB_PORT: 5432
       DB_POSTGRESDB_DATABASE: ${N8N_DB_NAME:-n8n}
       DB_POSTGRESDB_USER: ${POSTGRES_USER:-paperless}
       DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
-      # Sécurité
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
       N8N_BASIC_AUTH_ACTIVE: ${N8N_BASIC_AUTH_ACTIVE:-true}
       N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
       N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
-      # URL webhooks
       WEBHOOK_URL: ${N8N_WEBHOOK_BASE_URL:-http://localhost:5678}
       N8N_HOST: "0.0.0.0"
       N8N_PORT: "5678"
       N8N_PROTOCOL: "http"
       GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Europe/Paris}
-      # Notifications
       N8N_EMAIL_MODE: smtp
       N8N_SMTP_HOST: ${SMTP_HOST:-}
       N8N_SMTP_PORT: ${SMTP_PORT:-587}
@@ -149,7 +145,7 @@ services:
       - ollama-models:/root/.ollama
     networks:
       - ged-network
-    # Décommentez si vous avez un GPU NVIDIA disponible dans la VM :
+    # GPU NVIDIA (décommenter si disponible dans la VM via passthrough Proxmox) :
     # deploy:
     #   resources:
     #     reservations:
@@ -186,6 +182,28 @@ services:
       - ged-network
 
   # ---------------------------------------------------------------------------
+  # Caddy — Reverse Proxy HTTPS (certificats auto-signés pour réseau local)
+  # Désactiver en commentant ce bloc si vous n'utilisez pas HTTPS
+  # ---------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    container_name: ged-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - ged-network
+    depends_on:
+      - paperless-ngx
+      - n8n
+      - portainer
+
+  # ---------------------------------------------------------------------------
   # Portainer CE — Interface web de gestion Docker
   # ---------------------------------------------------------------------------
   portainer:
@@ -201,21 +219,17 @@ services:
       - ged-network
 
   # ---------------------------------------------------------------------------
-  # Watchtower — Mises à jour automatiques des images Docker
+  # Watchtower — Mises à jour automatiques des images Docker (nuit à 3h00)
   # ---------------------------------------------------------------------------
   watchtower:
     image: containrrr/watchtower:latest
     container_name: ged-watchtower
     restart: unless-stopped
     environment:
-      # Vérifier les mises à jour chaque nuit à 3h00
       WATCHTOWER_SCHEDULE: "0 0 3 * * *"
-      # Nettoyer les anciennes images après mise à jour
       WATCHTOWER_CLEANUP: "true"
-      # Ne mettre à jour que les conteneurs easy-GED (étiquetés)
       WATCHTOWER_LABEL_ENABLE: "false"
-      # Notification Telegram après mise à jour (optionnel)
-      WATCHTOWER_NOTIFICATION_URL: "telegram://${TELEGRAM_BOT_TOKEN}@telegram?chats=${TELEGRAM_CHAT_ID}&title=easy-GED+Update"
+      WATCHTOWER_NOTIFICATION_URL: "telegram://${TELEGRAM_BOT_TOKEN}@telegram?chats=${TELEGRAM_CHAT_ID}&title=easy-GED+MàJ"
       TZ: ${PAPERLESS_TIME_ZONE:-Europe/Paris}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -224,6 +238,8 @@ services:
 
 # =============================================================================
 # Volumes persistants
+# Note : Les sauvegardes sont gérées par Proxmox Backup Server (PBS)
+#        Configurer un job de backup PBS sur la VM GED depuis l'interface Proxmox
 # =============================================================================
 volumes:
   postgres-data:
@@ -241,6 +257,10 @@ volumes:
   ollama-models:
     driver: local
   portainer-data:
+    driver: local
+  caddy-data:
+    driver: local
+  caddy-config:
     driver: local
 
 # =============================================================================

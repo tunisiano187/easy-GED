@@ -1,0 +1,129 @@
+{
+  "name": "easy-GED — Bilan Mensuel Budget",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 1 * *"
+            }
+          ]
+        }
+      },
+      "id": "01-cron-mensuel",
+      "name": "Cron — 1er du mois à 8h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calculer les dates du mois précédent\nconst now = new Date();\nconst firstDayLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);\nconst lastDayLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);\n\nconst toISO = (d) => d.toISOString().split('T')[0];\n\nconst moisNoms = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];\nconst nomMois = moisNoms[firstDayLastMonth.getMonth()];\nconst annee = firstDayLastMonth.getFullYear();\n\nreturn [{\n  json: {\n    date_debut: toISO(firstDayLastMonth),\n    date_fin: toISO(lastDayLastMonth),\n    mois_label: `${nomMois} ${annee}`,\n    annee: annee\n  }\n}];"
+      },
+      "id": "02-calc-dates",
+      "name": "Calculer Période",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.PAPERLESS_URL }}/api/documents/?custom_field_query={{ encodeURIComponent('[\"AND\",[\"custom_fields__field__name\",\"type_document\",\"facture\"],[\"created__date__gte\",\"' + $json.date_debut + '\"],[\"created__date__lte\",\"' + $json.date_fin + '\"]]') }}&page_size=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "03-get-factures",
+      "name": "Récupérer Factures du Mois",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "paperless-token",
+          "name": "Paperless API Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construire le bilan mensuel\nconst periode = $('Calculer Période').first().json;\nconst searchResult = $input.first().json;\nconst documents = searchResult.results || [];\n\n// Agréger par émetteur\nconst parEmetteur = {};\nlet totalMois = 0;\nlet facturesPayees = 0;\nlet facturesNonPayees = 0;\nlet totalNonPaye = 0;\n\nfor (const doc of documents) {\n  const fields = doc.custom_fields || [];\n  const getField = (name) => (fields.find(f => f.field === name) || {}).value ?? null;\n\n  const emetteur = getField('emetteur') || 'Inconnu';\n  const montant = parseFloat(getField('montant_total')) || 0;\n  const statut = getField('statut_paiement') || 'Non Payé';\n\n  if (!parEmetteur[emetteur]) {\n    parEmetteur[emetteur] = { total: 0, count: 0, payes: 0, non_payes: 0 };\n  }\n  parEmetteur[emetteur].total += montant;\n  parEmetteur[emetteur].count += 1;\n\n  if (statut === 'Payé') {\n    parEmetteur[emetteur].payes += 1;\n    facturesPayees += 1;\n  } else if (statut !== 'En Litige') {\n    parEmetteur[emetteur].non_payes += 1;\n    facturesNonPayees += 1;\n    totalNonPaye += montant;\n  }\n\n  totalMois += montant;\n}\n\n// Trier par montant décroissant\nconst lignesEmetteurs = Object.entries(parEmetteur)\n  .sort(([,a], [,b]) => b.total - a.total)\n  .map(([emetteur, data]) => {\n    const emoji = data.non_payes > 0 ? '⚠️' : '✅';\n    return `${emoji} ${emetteur.padEnd(25)} ${data.total.toFixed(2).padStart(8)} € (${data.count} doc${data.count > 1 ? 's' : ''})`;\n  })\n  .join('\\n');\n\nconst rapport = [\n  `📊 BILAN easy-GED — ${periode.mois_label}`,\n  `${'─'.repeat(45)}`,\n  ``,\n  `💶 Total factures : ${totalMois.toFixed(2)} €`,\n  `✅ Payées         : ${facturesPayees}`,\n  `⚠️  Non payées    : ${facturesNonPayees} (${totalNonPaye.toFixed(2)} €)`,\n  `📄 Documents      : ${documents.length}`,\n  ``,\n  `Détail par émetteur :`,\n  `${'─'.repeat(45)}`,\n  lignesEmetteurs || '  Aucune facture ce mois',\n  ``,\n  `${'─'.repeat(45)}`,\n  `easy-GED — Bilan automatique du 1er du mois`\n].join('\\n');\n\nreturn [{\n  json: {\n    periode: periode.mois_label,\n    total_mois: totalMois,\n    factures_payees: facturesPayees,\n    factures_non_payees: facturesNonPayees,\n    total_non_paye: totalNonPaye,\n    nb_documents: documents.length,\n    rapport_texte: rapport,\n    a_alerter: facturesNonPayees > 0\n  }\n}];"
+      },
+      "id": "04-build-bilan",
+      "name": "Construire Bilan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "={{ $json.rapport_texte }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "disable_notification": false
+        }
+      },
+      "id": "05-telegram-bilan",
+      "name": "Telegram — Bilan Mensuel",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1120, 220],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot",
+          "name": "Telegram Bot easy-GED"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_FROM }}",
+        "toEmail": "={{ $env.NOTIFICATION_EMAIL }}",
+        "subject": "📊 Bilan easy-GED — {{ $json.periode }} ({{ $json.total_mois.toFixed(2) }} €)",
+        "emailFormat": "text",
+        "text": "={{ $json.rapport_texte }}"
+      },
+      "id": "06-email-bilan",
+      "name": "Email — Bilan Mensuel",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1120, 400],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-creds",
+          "name": "SMTP Notifications"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cron — 1er du mois à 8h": {
+      "main": [[{ "node": "Calculer Période", "type": "main", "index": 0 }]]
+    },
+    "Calculer Période": {
+      "main": [[{ "node": "Récupérer Factures du Mois", "type": "main", "index": 0 }]]
+    },
+    "Récupérer Factures du Mois": {
+      "main": [[{ "node": "Construire Bilan", "type": "main", "index": 0 }]]
+    },
+    "Construire Bilan": {
+      "main": [[
+        { "node": "Telegram — Bilan Mensuel", "type": "main", "index": 0 },
+        { "node": "Email — Bilan Mensuel", "type": "main", "index": 0 }
+      ]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "tags": [{ "name": "easy-GED" }],
+  "triggerCount": 1,
+  "updatedAt": "2026-08-16T00:00:00.000Z",
+  "versionId": "1"
+}
