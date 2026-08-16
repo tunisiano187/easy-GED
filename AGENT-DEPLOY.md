@@ -53,6 +53,26 @@ Adapter le plan d'exécution en fonction du DEPLOY_MODE choisi :
 - all-in-one : exécuter ÉTAPES 1-13 sur la VM uniquement
 - split : lancer ÉTAPES 1-13 sur VM et ÉTAPE 14 (Pi 5) en parallèle via sous-agents
 
+#### Détection automatique — Systèmes de monitoring et Home Assistant
+
+Avant toute chose, scanner le réseau local pour détecter des systèmes existants :
+
+```bash
+# Détecter Home Assistant (port 8123)
+curl -s --connect-timeout 2 http://[IP_LAN]:8123/api/ -o /dev/null -w "%{http_code}"
+
+# Détecter Uptime Kuma (port 3001)
+curl -s --connect-timeout 2 http://[IP_LAN]:3001/ -o /dev/null -w "%{http_code}"
+
+# Détecter Prometheus (port 9090) ou Grafana (port 3000)
+curl -s --connect-timeout 2 http://[IP_LAN]:9090/-/healthy -o /dev/null -w "%{http_code}"
+curl -s --connect-timeout 2 http://[IP_LAN]:3000/api/health -o /dev/null -w "%{http_code}"
+```
+
+Si Home Assistant **ou** une solution de monitoring est détectée (ou si l'utilisateur en
+confirme l'existence), **proposer systématiquement** d'ajouter l'intégration NUT en ÉTAPE 15
+et l'inclure dans le plan d'exécution. Ne pas l'exécuter sans confirmation de l'utilisateur.
+
 ### ÉTAPE 1 — Vérification système
 - Vérifier que le système est bien Debian/Ubuntu AMD64
 - Vérifier qu'il y a au moins 8 Go de RAM disponible
@@ -188,6 +208,94 @@ Sous-agent Pi 5 (SSH vers PI5_HOST) :
 - Vérifier le statut : docker compose -f docker-compose.pi.yml ps
 - Tester : déposer un fichier test dans \\PI5_IP\consume → vérifier dans Paperless
 
+### ÉTAPE 15 — Intégration NUT avec systèmes existants (si détectés à l'ÉTAPE 0)
+
+> Cette étape est **conditionnelle** : n'exécuter que si un onduleur APC est configuré
+> (profil `nut` actif) **ET** qu'un système de monitoring ou Home Assistant a été détecté.
+> Toujours confirmer avec l'utilisateur avant d'apporter des modifications à un système existant.
+
+#### Option A — Home Assistant
+
+Si Home Assistant est détecté ou confirmé par l'utilisateur, proposer l'ajout de
+l'intégration NUT pour afficher l'état de l'onduleur dans HA (niveau de charge, état,
+autonomie restante, tension) et déclencher des automatisations en cas de coupure secteur.
+
+**Méthode recommandée (via l'API HA REST) :**
+
+```bash
+# Vérifier la version HA et l'accessibilité de l'API
+HA_URL="http://[HA_IP]:8123"
+HA_TOKEN="[LONG_LIVED_ACCESS_TOKEN]"   # Profil HA → Sécurité → Tokens longue durée
+
+curl -s -H "Authorization: Bearer $HA_TOKEN" "$HA_URL/api/" | python3 -c \
+  "import sys,json; d=json.load(sys.stdin); print('HA', d.get('version','?'))"
+```
+
+Instructions à donner à l'utilisateur pour ajouter l'intégration manuellement :
+```
+Home Assistant → Paramètres → Appareils et services → + Ajouter une intégration
+→ Rechercher "NUT" → Network UPS Tools
+→ Hôte : [IP_PI]   Port : 3493
+→ Utilisateur : upsmon   Mot de passe : [NUT_UPSD_PASSWORD]
+→ Valider → sélectionner l'UPS détecté
+```
+
+Si l'utilisateur le demande, générer également une automatisation HA basique :
+- Déclencheur : état UPS passe à "OL DISCHRG" (sur batterie)
+- Action : notification mobile "⚡ Coupure secteur — passage sur batterie"
+
+#### Option B — Prometheus / Grafana
+
+Si Prometheus ou Grafana est détecté, ajouter `nut-exporter` en tant que nouveau
+service Docker sur le Pi 5 (ou sur la VM si mode all-in-one) :
+
+```yaml
+# Ajouter dans docker-compose.pi.yml sous le profil "nut"
+nut-exporter:
+  profiles: ["nut"]
+  image: hon96/nut-exporter:latest
+  container_name: pi-nut-exporter
+  restart: unless-stopped
+  environment:
+    NUT_EXPORTER_SERVER: nut-upsd
+    NUT_EXPORTER_PORT: 3493
+    NUT_EXPORTER_USERNAME: ${NUT_UPSD_USER:-upsmon}
+    NUT_EXPORTER_PASSWORD: ${NUT_UPSD_PASSWORD}
+  ports:
+    - "9199:9199"   # métriques Prometheus sur /metrics
+  depends_on:
+    - nut-upsd
+  networks:
+    - pi-network
+```
+
+Puis ajouter le scrape job dans la config Prometheus existante :
+```yaml
+# prometheus.yml — ajouter dans scrape_configs :
+- job_name: 'nut'
+  static_configs:
+    - targets: ['[IP_PI]:9199']
+      labels:
+        instance: 'ups-apc'
+```
+
+Si Grafana est présent, proposer d'importer le dashboard NUT communautaire
+(ID Grafana : **13822** — "NUT UPS Monitoring").
+
+#### Option C — Uptime Kuma
+
+Si Uptime Kuma est détecté, proposer d'ajouter deux moniteurs :
+- **Port TCP 3493** sur IP_PI → vérifie que le démon NUT répond
+- **HTTP 6543** sur IP_PI → vérifie l'interface web WebNUT (si profil nut actif)
+
+```bash
+# Exemple via l'API Uptime Kuma (si API activée)
+# Moniteur TCP pour le démon NUT
+curl -s -X POST http://[UK_IP]:3001/api/monitors \
+  -H "Content-Type: application/json" \
+  -d '{"type":"port","name":"NUT UPS (Pi 5)","hostname":"[IP_PI]","port":3493,"interval":60}'
+```
+
 ### ÉTAPE 13 — Rapport final
 Afficher un résumé avec :
 - ✓/✗ pour chaque test
@@ -211,6 +319,7 @@ L'agent principal doit déléguer les tâches suivantes à des sous-agents :
 | Déploiement Pi 5 (si split) | `sous-agent-pi` | ÉTAPES 7-12 VM |
 | Tests de validation | `sous-agent-tests` | après ÉTAPE 12 |
 | Configuration Cloudflare (si activé) | `sous-agent-cf` | après stack up |
+| Intégration NUT HA/monitoring (si détecté) | `sous-agent-nut-integration` | après ÉTAPE 14 |
 
 Instructions pour les sous-agents :
 - Chaque sous-agent reçoit son contexte complet (IP, credentials, objectif)
