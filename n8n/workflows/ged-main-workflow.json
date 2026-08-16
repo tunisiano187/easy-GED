@@ -390,6 +390,78 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [2000, 560]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NTFY_BASE_URL }}/{{ $env.NTFY_TOPIC_DOCUMENTS }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Title",
+              "value": "={{ $json.type_document === 'facture' ? '🧾 Facture reçue' : '📄 Document reçu' }}"
+            },
+            {
+              "name": "Priority",
+              "value": "={{ $json.urgence === true ? 'high' : 'default' }}"
+            },
+            {
+              "name": "Tags",
+              "value": "invoice,ged"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.NTFY_ACCESS_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "text/plain",
+        "body": "={{ $json.emetteur }} — {{ $json.montant_total !== null ? $json.montant_total.toFixed(2) + '€' : 'montant inconnu' }}\\nÉchéance : {{ $json.date_echeance || 'non renseignée' }}\\n{{ $json.iban ? 'IBAN: ' + $json.iban : '' }}"
+      },
+      "id": "18-ntfy-facture",
+      "name": "Ntfy — Facture",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2660, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NTFY_BASE_URL }}/{{ $env.NTFY_TOPIC_ALERTS }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Title",
+              "value": "🚨 LITIGE — Rappel reçu pour facture déjà payée !"
+            },
+            {
+              "name": "Priority",
+              "value": "urgent"
+            },
+            {
+              "name": "Tags",
+              "value": "rotating_light,ged,litige"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.NTFY_ACCESS_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "text/plain",
+        "body": "={{ $json.emetteur }} réclame {{ $json.montant_total !== null ? $json.montant_total.toFixed(2) + '€' : 'un montant' }} déjà payé !\\nVérifier la facture dans Paperless."
+      },
+      "id": "19-ntfy-litige",
+      "name": "Ntfy — Litige",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2880, 340]
     }
   ],
   "connections": {
@@ -524,6 +596,11 @@
             "node": "Telegram — Facture",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Ntfy — Facture",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -567,6 +644,11 @@
             "node": "Email — Litige URGENT",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Ntfy — Litige",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -587,5 +669,5 @@
   ],
   "triggerCount": 1,
   "updatedAt": "2026-08-16T00:00:00.000Z",
-  "versionId": "2"
+  "versionId": "3"
 }

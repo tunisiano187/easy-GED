@@ -59,7 +59,7 @@ Email IMAP (optionnel) ───────────────────
                            Tag "À Payer"        vérif. si payée
                            alerte échéance     → alerte litige si oui
                                   │
-                        Email + Telegram + QR Code EPC
+                        Email + Telegram + Ntfy + QR Code EPC
 
 Proxmox PBS ◄── Snapshots VM quotidiens (Proxmox Backup Server)
 ```
@@ -180,6 +180,37 @@ SCANNER_SMB_PASSWORD=mdp_scanner    # mot de passe SMB que tu choisis
 4. Aller sur `https://api.telegram.org/bot<TON_TOKEN>/getUpdates`
 5. Envoyer un message à ton bot depuis Telegram
 6. Rafraîchir la page → copier le `chat.id` dans `TELEGRAM_CHAT_ID`
+
+### Ntfy — Notifications push mobiles
+
+Ntfy est un serveur de notifications push auto-hébergé. Les alertes GED apparaissent
+sur votre téléphone en temps réel, sans compte externe.
+
+**Installation de l'app mobile :**
+- Android : [Play Store](https://play.google.com/store/apps/details?id=io.heckel.ntfy) ou [F-Droid](https://f-droid.org/en/packages/io.heckel.ntfy/)
+- iOS : [App Store](https://apps.apple.com/app/ntfy/id1625396347)
+
+**Configuration après démarrage :**
+```bash
+# Créer un utilisateur admin Ntfy
+docker exec -it ged-ntfy ntfy user add --role=admin admin
+
+# Générer un token d'accès
+docker exec -it ged-ntfy ntfy token add admin
+# → Copier le token dans .env : NTFY_ACCESS_TOKEN=tk_xxxxx
+
+# Abonner l'app mobile aux topics :
+# http://IP_VM:8090/ged-documents  (documents entrants)
+# http://IP_VM:8090/ged-alertes    (alertes urgentes)
+```
+
+**Interface web :** `http://IP_VM:8090`
+
+**Topics utilisés par easy-GED :**
+| Topic | Usage |
+|---|---|
+| `ged-documents` | Nouvelles factures et documents reçus |
+| `ged-alertes` | Alertes urgentes (litiges, rappels abusifs) |
 
 ### Créer un mot de passe d'application Gmail (si SMTP Gmail)
 
@@ -351,6 +382,7 @@ cp /chemin/vers/une_facture.pdf /opt/easy-ged/consume/
 | **n8n** (workflows) | `http://IP_VM:5678` | N8N_BASIC_AUTH_USER / PASSWORD |
 | **Portainer** (Docker) | `http://IP_VM:9000` | Créer au premier accès |
 | **Ollama** (API IA) | `http://IP_VM:11434` | Pas d'auth |
+| **Ntfy** (notifications push) | `http://IP_VM:8090` | admin / (défini à l'install) |
 
 ---
 
@@ -443,7 +475,7 @@ Les sauvegardes sont gérées par **Proxmox Backup Server** — elles couvrent l
 - [ ] QR Code EPC généré localement (sans appel externe)
 - [ ] Amélioration OCR avec Surya/Docling (meilleure précision documents complexes)
 - [ ] Dashboard budget Grafana (visualisation des dépenses)
-- [ ] Notification push mobile (Gotify ou Ntfy auto-hébergé)
+- [x] Notification push mobile (Ntfy auto-hébergé)
 - [ ] Multi-utilisateurs Paperless (famille / PME)
 
 ---
