@@ -41,10 +41,10 @@ Priorité décroissante. L'agent traite ces items dans l'ordre lors de ses scans
 
 ### P1 — Haute priorité
 
-- [ ] **QR Code EPC local** — Générer le QR Code de paiement (format EPC/SEPA) sans appel
+- [x] **QR Code EPC local** — Générer le QR Code de paiement (format EPC/SEPA) sans appel
       externe, directement dans le workflow n8n via un nœud Code (bibliothèque `qrcode` npm).
       Le QR est inséré en base64 dans l'email de notification.
-      → Fichier : `n8n/workflows/ged-main-workflow.json` (mise à jour nœud QR)
+      → PR #5 mergée — `n8n/Dockerfile`, `docker-compose.yml`, `n8n/workflows/ged-main-workflow.json`
 
 - [ ] **Gotify / Ntfy — Notifications push mobiles** — Alternative auto-hébergée aux
       notifications Telegram pour les alertes (coupure UPS, document urgent, rappel).
