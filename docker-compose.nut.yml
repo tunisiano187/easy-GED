@@ -1,0 +1,67 @@
+# =============================================================================
+# easy-GED — NUT (Network UPS Tools) — Monitoring UPS APC
+#
+# IMPORTANT : Ce fichier est destiné à tourner sur un device avec
+# accès USB PHYSIQUE à l'UPS (Raspberry Pi, host Proxmox, Mini PC dédié).
+# Il ne peut PAS fonctionner dans une VM Proxmox sans USB passthrough.
+#
+# Usage sur le device NUT :
+#   docker compose -f docker-compose.nut.yml up -d
+#
+# Les clients NUT (Proxmox, VMs, NAS) se connecteront à ce service
+# sur le port 3493 de l'IP du device NUT.
+#
+# Voir README.md → section "Monitoring UPS APC avec NUT"
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # NUT UPS Daemon — Serveur NUT (sur device avec USB physique)
+  # ---------------------------------------------------------------------------
+  nut-upsd:
+    image: instantlinux/nut-upsd:latest
+    container_name: nut-upsd
+    restart: unless-stopped
+    ports:
+      - "3493:3493"
+    environment:
+      # Nom logique de l'UPS (utilisé par les clients NUT)
+      UPS_NAME: ${NUT_UPS_NAME:-apc}
+      # Driver APC USB (pour APC Back-UPS, Smart-UPS USB)
+      UPS_DRIVER: ${NUT_UPS_DRIVER:-usbhid-ups}
+      # Port USB (laisser auto pour la plupart des APC)
+      UPS_PORT: auto
+      # Utilisateur pour les clients NUT
+      API_USER: ${NUT_UPSD_USER:-upsmon}
+      API_PASSWORD: ${NUT_UPSD_PASSWORD}
+    # Passer l'USB de l'UPS dans le conteneur
+    # Identifier le bon device : lsusb | grep APC
+    # Puis : ls /dev/bus/usb/XXX/  → remplacer XXX/YYY ci-dessous
+    devices:
+      - /dev/bus/usb:/dev/bus/usb    # Passe tous les USB (simpliste mais fonctionnel)
+    # Ou plus ciblé (préférable) :
+    # devices:
+    #   - /dev/bus/usb/001/003:/dev/bus/usb/001/003
+    privileged: true    # Requis pour l'accès USB HID
+
+  # ---------------------------------------------------------------------------
+  # NUT Monitor — Interface web de monitoring (optionnel)
+  # ---------------------------------------------------------------------------
+  nut-monitor:
+    image: teknologist/webnut:latest
+    container_name: nut-monitor
+    restart: unless-stopped
+    ports:
+      - "6543:6543"
+    environment:
+      NUT_HOST: nut-upsd
+      NUT_PORT: 3493
+      NUT_USER: ${NUT_UPSD_USER:-upsmon}
+      NUT_PASSWD: ${NUT_UPSD_PASSWORD}
+    depends_on:
+      - nut-upsd
+
+# =============================================================================
+# Configuration NUT à adapter (voir nut/ups.conf et nut/upsd.users)
+# =============================================================================

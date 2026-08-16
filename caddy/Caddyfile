@@ -1,0 +1,48 @@
+# =============================================================================
+# easy-GED — Caddyfile (Reverse Proxy HTTPS)
+# Caddy génère automatiquement des certificats auto-signés pour le réseau local
+# Accès HTTPS sans configuration Let's Encrypt (pas d'accès internet requis)
+#
+# Pour un accès externe sécurisé, utiliser Tailscale (voir README.md)
+# =============================================================================
+
+{
+  # Certificats auto-signés pour usage local (pas de Let's Encrypt)
+  local_certs
+  # Logs en JSON pour Portainer
+  log {
+    output stdout
+    format json
+  }
+}
+
+# Paperless-ngx
+paperless.home.local {
+  reverse_proxy paperless-ngx:8000
+  encode gzip
+  header {
+    X-Frame-Options "SAMEORIGIN"
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "strict-origin-when-cross-origin"
+  }
+}
+
+# n8n — Workflows
+n8n.home.local {
+  reverse_proxy n8n:5678
+  encode gzip
+}
+
+# Portainer — Gestion Docker
+portainer.home.local {
+  reverse_proxy portainer:9000
+  encode gzip
+}
+
+# Ollama API (restreint au réseau local uniquement)
+ollama.home.local {
+  reverse_proxy ollama:11434
+  # Limiter à localhost/LAN — ne pas exposer à internet
+  @blocked not remote_ip private_ranges
+  respond @blocked "Accès refusé" 403
+}

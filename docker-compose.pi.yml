@@ -1,0 +1,150 @@
+# =============================================================================
+# easy-GED — Stack Raspberry Pi 5 (mode DEPLOY_MODE=split)
+#
+# Ce fichier est destiné au Raspberry Pi 5 qui reçoit les fichiers du scanner
+# et les envoie à Paperless-ngx sur la VM Proxmox via l'API REST.
+#
+# Le Pi gère :
+#   1. Réception des scans via SMB (le scanner y envoie ses PDFs)
+#   2. Transfert automatique vers Paperless sur la VM
+#   3. Monitoring UPS APC (si UPS branché en USB sur le Pi)
+#
+# Usage :
+#   docker compose -f docker-compose.pi.yml up -d
+#
+# Prérequis dans .env :
+#   PAPERLESS_URL=http://IP_VM:8000
+#   PAPERLESS_API_TOKEN=xxx          ← Créer dans Paperless → Tokens API
+#   SCANNER_SMB_USER=scanner
+#   SCANNER_SMB_PASSWORD=xxx
+#
+# Voir README.md → section "Raspberry Pi 5 (mode split)"
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Samba — Réception fichiers scanner
+  # Le scanner envoie ses PDFs vers \\IP_PI\consume
+  # ---------------------------------------------------------------------------
+  pi-samba:
+    image: dperson/samba:latest
+    container_name: pi-samba
+    restart: unless-stopped
+    ports:
+      - "445:445"
+      - "139:139"
+    environment:
+      TZ: ${PAPERLESS_TIME_ZONE:-Europe/Paris}
+    command: >
+      -u "${SCANNER_SMB_USER:-scanner};${SCANNER_SMB_PASSWORD}"
+      -s "consume;/consume;yes;no;no;${SCANNER_SMB_USER:-scanner};${SCANNER_SMB_USER:-scanner};Paperless Consume"
+      -p
+    volumes:
+      - consume-pi:/consume
+    networks:
+      - pi-network
+
+  # ---------------------------------------------------------------------------
+  # Pi Pusher — Surveille /consume et envoie chaque nouveau fichier à Paperless
+  # Utilise inotifywait pour détecter les nouveaux scans en temps réel
+  # ---------------------------------------------------------------------------
+  pi-pusher:
+    image: alpine:3.19
+    container_name: pi-pusher
+    restart: unless-stopped
+    environment:
+      PAPERLESS_URL: ${PAPERLESS_URL:-http://192.168.1.42:8000}
+      PAPERLESS_API_TOKEN: ${PAPERLESS_API_TOKEN:-}
+    volumes:
+      - consume-pi:/consume
+      - ./paperless/scripts/push-to-paperless.sh:/push-to-paperless.sh:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "set -e
+       apk add --no-cache inotify-tools curl bash > /dev/null 2>&1
+       chmod +x /push-to-paperless.sh
+       echo '[Pi Pusher] Démarré — surveillance de /consume'
+       echo '[Pi Pusher] Paperless cible : $$PAPERLESS_URL'
+
+       # Traiter les fichiers déjà présents au démarrage
+       for f in /consume/*.pdf /consume/*.PDF /consume/*.jpg /consume/*.png; do
+         [ -f \"$$f\" ] && /push-to-paperless.sh \"$$f\" || true
+       done
+
+       # Surveiller les nouveaux fichiers en temps réel
+       inotifywait -m /consume -e close_write -e moved_to --format '%f' |
+       while read filename; do
+         if echo \"$$filename\" | grep -qiE '\.(pdf|jpg|jpeg|png|tiff?)$'; then
+           sleep 1   # Attendre que le fichier soit complètement écrit
+           FILEPATH=\"/consume/$$filename\"
+           [ -f \"$$FILEPATH\" ] && /push-to-paperless.sh \"$$FILEPATH\" || true
+         fi
+       done"
+    depends_on:
+      - pi-samba
+    networks:
+      - pi-network
+
+  # ---------------------------------------------------------------------------
+  # NUT UPS Daemon — Monitoring APC (optionnel — si UPS branché sur le Pi)
+  # Décommenter si un UPS APC est connecté en USB au Raspberry Pi
+  # ---------------------------------------------------------------------------
+  # nut-upsd:
+  #   image: instantlinux/nut-upsd:latest
+  #   container_name: nut-upsd
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3493:3493"
+  #   environment:
+  #     UPS_NAME: ${NUT_UPS_NAME:-apc}
+  #     UPS_DRIVER: ${NUT_UPS_DRIVER:-usbhid-ups}
+  #     UPS_PORT: auto
+  #     API_USER: ${NUT_UPSD_USER:-upsmon}
+  #     API_PASSWORD: ${NUT_UPSD_PASSWORD}
+  #   devices:
+  #     - /dev/bus/usb:/dev/bus/usb
+  #   privileged: true
+  #   networks:
+  #     - pi-network
+
+  # nut-monitor:
+  #   image: teknologist/webnut:latest
+  #   container_name: nut-monitor
+  #   restart: unless-stopped
+  #   ports:
+  #     - "6543:6543"
+  #   environment:
+  #     NUT_HOST: nut-upsd
+  #     NUT_PORT: 3493
+  #     NUT_USER: ${NUT_UPSD_USER:-upsmon}
+  #     NUT_PASSWD: ${NUT_UPSD_PASSWORD}
+  #   depends_on:
+  #     - nut-upsd
+  #   networks:
+  #     - pi-network
+
+  # ---------------------------------------------------------------------------
+  # Watchtower Pi — MàJ auto des images Docker sur le Pi (nuit à 3h30)
+  # ---------------------------------------------------------------------------
+  pi-watchtower:
+    image: containrrr/watchtower:latest
+    container_name: pi-watchtower
+    restart: unless-stopped
+    environment:
+      WATCHTOWER_SCHEDULE: "0 30 3 * * *"
+      WATCHTOWER_CLEANUP: "true"
+      TZ: ${PAPERLESS_TIME_ZONE:-Europe/Paris}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - pi-network
+
+# =============================================================================
+volumes:
+  consume-pi:
+    driver: local
+
+networks:
+  pi-network:
+    driver: bridge

@@ -63,8 +63,16 @@ echo ""
 info "Mise à jour des paquets système..."
 apt-get update -qq
 apt-get upgrade -y -qq
-apt-get install -y -qq curl git python3 cifs-utils restic jq ca-certificates gnupg lsb-release
+apt-get install -y -qq curl git python3 jq ca-certificates gnupg lsb-release unattended-upgrades
 success "Paquets système installés"
+
+# Activer les mises à jour automatiques de sécurité OS
+cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+EOF
+success "Mises à jour automatiques de sécurité OS activées (unattended-upgrades)"
 
 # --- Installation Docker ---
 echo ""
@@ -150,8 +158,6 @@ else
     echo "   • POSTGRES_PASSWORD"
     echo "   • SMTP_HOST / SMTP_USER / SMTP_PASSWORD"
     echo "   • TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID"
-    echo "   • NAS_SMB_HOST / NAS_SMB_SHARE / NAS_SMB_USER / NAS_SMB_PASSWORD"
-    echo "   • RESTIC_PASSWORD  ← CRITIQUE, ne pas perdre !"
     echo "   • SCANNER_SMB_USER / SCANNER_SMB_PASSWORD"
     echo ""
     read -rp "Appuyer sur ENTRÉE quand le .env est configuré..." _
@@ -200,15 +206,24 @@ source <(grep -v '^#' .env | grep -v '^$')
     "${PAPERLESS_ADMIN_USER:-admin}" \
     "$PAPERLESS_ADMIN_PASSWORD"
 
-# --- Configurer les sauvegardes ---
+# --- Mises à jour automatiques du projet ---
 echo ""
-info "Configuration des sauvegardes automatiques..."
-cat > /etc/cron.d/easy-ged-backup << 'EOF'
-# easy-GED — Sauvegarde quotidienne à 4h00
-0 4 * * * root /opt/easy-ged/scripts/backup.sh >> /var/log/easy-ged-backup.log 2>&1
+info "Configuration des mises à jour automatiques du projet..."
+chmod +x "$INSTALL_DIR/scripts/update.sh"
+cat > /etc/cron.d/easy-ged-update << EOF
+# easy-GED — Mise à jour hebdomadaire du projet + images Docker (dimanche 3h00)
+0 3 * * 0  root  INSTALL_DIR=/opt/easy-ged /opt/easy-ged/scripts/update.sh --project-only >> /var/log/easy-ged-update.log 2>&1
 EOF
-chmod 644 /etc/cron.d/easy-ged-backup
-success "Cron de sauvegarde configuré (4h00 chaque nuit)"
+chmod 644 /etc/cron.d/easy-ged-update
+success "Mise à jour automatique configurée (dimanche 3h00)"
+info "Note : Les images Docker sont mises à jour par Watchtower (nuit à 3h00)"
+info "Note : L'OS est mis à jour par unattended-upgrades (quotidien)"
+
+# --- Sauvegardes ---
+echo ""
+info "Sauvegardes : gérées par Proxmox Backup Server (PBS)"
+echo "  → Configurer le job PBS dans Proxmox UI : Datacenter → Backup → Add"
+echo "  → Schedule recommandé : daily 04:00, rétention : keep-daily=7"
 
 # --- Rapport final ---
 VM_IP=$(hostname -I | awk '{print $1}')
@@ -223,6 +238,11 @@ echo "  📄 Paperless  : http://${VM_IP}:8000"
 echo "  ⚙  n8n        : http://${VM_IP}:5678"
 echo "  🐳 Portainer  : http://${VM_IP}:9000"
 echo "  🤖 Ollama API : http://${VM_IP}:11434"
+echo ""
+echo -e "${BLUE}Avec Caddy (HTTPS local) :${NC}"
+echo "  https://paperless.home.local"
+echo "  https://n8n.home.local"
+echo "  https://portainer.home.local"
 echo ""
 echo -e "${YELLOW}Étapes manuelles restantes :${NC}"
 echo "  1. Importer le workflow n8n :"

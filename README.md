@@ -2,8 +2,9 @@
 
 > Scannez un courrier, il est analysé, classé et vous alertez automatiquement. 100% local, zéro cloud.
 
-**Stack :** Paperless-ngx · n8n · Ollama (Mistral 7B) · PostgreSQL · Docker  
-**Hébergement :** VM Debian/Ubuntu sur Proxmox · NAS Synology (sauvegardes)
+**Stack :** Paperless-ngx · n8n · Ollama (Mistral 7B) · PostgreSQL · Caddy · Cloudflare Tunnel · Docker  
+**Hébergement :** VM Debian/Ubuntu sur Proxmox · Sauvegardes Proxmox PBS  
+**Modes :** All-in-one (VM seule) ou Split (Pi 5 scanner + VM GED)
 
 ---
 
@@ -25,7 +26,7 @@
 ### Matériel déjà en ta possession
 
 - ✅ Cluster Proxmox (le Mini PC serveur y sera intégré comme nouveau nœud)
-- ✅ NAS Synology basique (DS220j/DS223) — stockage + sauvegardes
+- ✅ NAS Synology basique (DS220j/DS223) — stockage réseau si besoin
 
 ---
 
@@ -51,7 +52,7 @@ Email IMAP (optionnel) ───────────────────
                                   │
                         Email + Telegram + QR Code EPC
 
-NAS Synology ◄── Restic (backups chiffrés quotidiens à 4h)
+Proxmox PBS ◄── Snapshots VM quotidiens (Proxmox Backup Server)
 ```
 
 ---
@@ -74,10 +75,11 @@ Le script fera tout automatiquement :
 1. ✅ Installe Docker Engine
 2. ✅ Clone le dépôt dans `/opt/easy-ged`
 3. ✅ Génère les clés secrètes
-4. ✅ Démarre tous les conteneurs
+4. ✅ Démarre tous les conteneurs (dont Caddy HTTPS)
 5. ✅ Télécharge Mistral 7B (~4.1 Go)
 6. ✅ Crée les champs personnalisés Paperless
-7. ✅ Configure les sauvegardes automatiques (4h00)
+7. ✅ Configure les mises à jour automatiques (OS + projet)
+8. ✅ Affiche les URLs d'accès HTTP et HTTPS
 
 ---
 
@@ -150,20 +152,15 @@ Valeurs à renseigner obligatoirement :
 ```bash
 PAPERLESS_ADMIN_PASSWORD=ton_mot_de_passe_paperless
 POSTGRES_PASSWORD=mot_de_passe_base_de_donnees
-SMTP_HOST=smtp.gmail.com          # ou ton fournisseur email
+SMTP_HOST=smtp.ton-fournisseur.com  # ex: smtp.gmail.com, smtp.ovh.net…
 SMTP_PORT=587
-SMTP_USER=ton@gmail.com
-SMTP_PASSWORD=mot_de_passe_application   # pas ton mdp Google, un "mot de passe d'application"
+SMTP_USER=ton@email.com
+SMTP_PASSWORD=mot_de_passe_application  # pour Gmail : "mot de passe d'application"
 NOTIFICATION_EMAIL=ton@email.com
-TELEGRAM_BOT_TOKEN=123456:ABC...  # depuis @BotFather
-TELEGRAM_CHAT_ID=123456789        # ton Chat ID
-NAS_SMB_HOST=192.168.1.10
-NAS_SMB_SHARE=backup
-NAS_SMB_USER=utilisateur_nas
-NAS_SMB_PASSWORD=mdp_nas
-RESTIC_PASSWORD=MOT_DE_PASSE_FORT_UNIQUE  # ⚠️ Ne pas perdre !
-SCANNER_SMB_USER=scanner
-SCANNER_SMB_PASSWORD=mdp_scanner
+TELEGRAM_BOT_TOKEN=123456:ABC...    # depuis @BotFather
+TELEGRAM_CHAT_ID=123456789          # ton Chat ID Telegram
+SCANNER_SMB_USER=scanner            # identifiant SMB que tu choisis
+SCANNER_SMB_PASSWORD=mdp_scanner    # mot de passe SMB que tu choisis
 ```
 
 ### Créer un bot Telegram (si pas encore fait)
@@ -269,16 +266,47 @@ docker compose logs -f paperless-ngx
 docker compose logs -f n8n
 docker compose logs -f ged-ollama
 
-# Sauvegarde manuelle
-sudo /opt/easy-ged/scripts/backup.sh
-
-# Mettre à jour Paperless (Watchtower le fait automatiquement)
+# Mettre à jour Paperless (Watchtower le fait automatiquement chaque nuit)
 docker compose pull paperless-ngx
 docker compose up -d paperless-ngx
 
-# Marquer une facture comme payée (via API)
-# → Le faire directement dans l'interface Paperless
+# Marquer une facture comme payée
+# → Directement dans l'interface Paperless (champ "statut_paiement")
 ```
+
+### Mises à jour automatiques
+
+Le système se met à jour à trois niveaux :
+
+| Niveau | Mécanisme | Fréquence |
+|---|---|---|
+| 🐳 Images Docker | Watchtower (inclus dans stack) | Toutes les nuits 3h00 |
+| 📦 Projet (git) | Cron → `scripts/update.sh` | Dimanche 3h00 |
+| 🔒 OS sécurité | `unattended-upgrades` | Quotidien |
+
+Mise à jour manuelle :
+```bash
+# Tout mettre à jour maintenant
+sudo /opt/easy-ged/scripts/update.sh
+
+# Projet uniquement
+sudo /opt/easy-ged/scripts/update.sh --project-only
+
+# OS uniquement
+sudo /opt/easy-ged/scripts/update.sh --os-only
+```
+
+---
+
+### Sauvegardes (Proxmox PBS)
+
+Les sauvegardes sont gérées par **Proxmox Backup Server** — elles couvrent la VM entière :
+
+1. Dans l'interface Proxmox : **Datacenter → Backup → Add**
+2. Sélectionner le nœud et la VM `easy-ged`
+3. Schedule recommandé : **Daily à 04:00**
+4. Rétention conseillée : `keep-daily=7, keep-weekly=4, keep-monthly=3`
+5. Vérifier que le datastore PBS a assez d'espace (VM ~50-80 Go compressée)
 
 ---
 
@@ -290,8 +318,9 @@ docker compose up -d paperless-ngx
 | Ollama lent | Normal sur CPU — première génération : 1-3 min. Les suivantes sont plus rapides. |
 | Webhook n8n pas reçu | Vérifier que `N8N_WEBHOOK_BASE_URL` contient l'IP de la VM (pas `localhost`) |
 | Scanner ne pousse pas | Vérifier le pare-feu VM : `ufw allow 445` et `ufw allow 139` |
-| Sauvegarde NAS échoue | Tester le montage manuellement : `mount -t cifs //IP_NAS/share /mnt/test -o user=...` |
+| Caddy : erreur de cert | Ajouter les hostnames `.home.local` dans `/etc/hosts` du PC client |
 | Pas de notification Telegram | Tester le bot : `curl https://api.telegram.org/bot<TOKEN>/getMe` |
+| Sauvegarde PBS échoue | Vérifier la connectivité Proxmox → PBS et l'espace disque du datastore |
 
 ---
 
@@ -302,15 +331,137 @@ docker compose up -d paperless-ngx
 - OCR + analyse Mistral 7B
 - Champs personnalisés (montant, IBAN, échéance, statut)
 - Notifications email + Telegram
-- Détection rappels abusifs
-- Sauvegardes Restic vers NAS
+- Détection rappels abusifs / litiges
+- Sauvegardes via Proxmox PBS (niveau VM)
+- HTTPS local avec Caddy (`*.home.local`, certificats auto-signés)
+- Accès externe via Cloudflare Tunnel (profil Docker optionnel)
+- Bilan mensuel automatique (cron n8n, 1er du mois à 8h)
+- Mode split Pi 5 + VM (architecture modulaire)
+- Mises à jour automatiques (OS + projet + Docker via Watchtower)
 
 ### v2 (prévue)
-- [ ] HTTPS avec Caddy (certificat auto Let's Encrypt ou self-signed)
-- [ ] Accès externe sécurisé via Tailscale
-- [ ] Amélioration OCR avec Surya/Docling (meilleure précision sur documents complexes)
-- [ ] Dashboard budget (synthèse mensuelle des dépenses)
 - [ ] QR Code EPC généré localement (sans appel externe)
+- [ ] Amélioration OCR avec Surya/Docling (meilleure précision documents complexes)
+- [ ] Dashboard budget Grafana (visualisation des dépenses)
+- [ ] Notification push mobile (Gotify ou Ntfy auto-hébergé)
+- [ ] Multi-utilisateurs Paperless (famille / PME)
+
+---
+
+## ☁️ Accès Externe via Cloudflare Tunnel (optionnel)
+
+> Accès HTTPS sécurisé depuis l'extérieur, sans ouvrir de ports sur votre box.
+
+**Prérequis :** Compte Cloudflare gratuit + un domaine géré par Cloudflare.
+
+### Configurer le tunnel
+
+1. Se connecter sur [one.dash.cloudflare.com](https://one.dash.cloudflare.com/)
+2. Aller dans **Networks → Tunnels → Create a tunnel**
+3. Choisir **Cloudflared** → Donner un nom (ex: `easy-ged-home`)
+4. Copier le **token** affiché
+5. Dans le fichier `.env`, décommenter et renseigner :
+   ```
+   CLOUDFLARE_TUNNEL_TOKEN=eyJhIjoiXXXX...
+   ```
+6. Dans le tunnel, configurer les **Public Hostnames** :
+   - `paperless.ton-domaine.com` → Service: `http://paperless-ngx:8000`
+   - `n8n.ton-domaine.com` → Service: `http://n8n:5678`
+   - `portainer.ton-domaine.com` → Service: `http://portainer:9000`
+   - ⚠️ **Ne pas exposer Ollama** (11434) — usage interne uniquement
+
+### Démarrer avec Cloudflare
+
+```bash
+# Démarrer la stack avec le tunnel Cloudflare
+docker compose --profile cloudflare up -d
+
+# Vérifier que cloudflared est connecté
+docker compose logs ged-cloudflared
+```
+
+---
+
+## 🍓 Raspberry Pi 5 — Mode Split (optionnel)
+
+> Le Pi 5 gère la réception des scans, la VM Proxmox gère l'analyse IA et le stockage.
+
+### Pourquoi le mode split ?
+
+| Avantage | Détail |
+|---|---|
+| Scanner dédié | Le Pi est toujours allumé pour recevoir les scans |
+| UPS possible | Le Pi peut monitorer l'UPS APC en USB |
+| VM moins sollicitée | La VM ne gère que l'IA et la GED |
+
+### Activer le mode split
+
+Dans `.env` :
+```bash
+DEPLOY_MODE=split
+PI5_HOST=192.168.1.XX
+```
+
+### Installer la stack Pi
+
+```bash
+# Sur le Raspberry Pi 5 (Raspberry Pi OS Lite 64-bit)
+curl -sSL https://raw.githubusercontent.com/tunisiano187/easy-GED/main/scripts/install-pi.sh | sudo bash
+```
+
+Le script installe sur le Pi :
+- **Samba** — réception fichiers scanner (`\\IP_PI\consume`)
+- **Pi Pusher** — transfert automatique vers Paperless via API REST
+- **Watchtower Pi** — mises à jour Docker du Pi
+- **Mises à jour automatiques** — cron hebdomadaire (dimanche 3h30)
+
+### Créer le token API Paperless
+
+Pour que le Pi envoie les fichiers à Paperless :
+1. Dans Paperless : **Paramètres → Tokens API → Ajouter**
+2. Donner un nom (ex: `pi5-pusher`)
+3. Copier le token dans `.env` du Pi : `PAPERLESS_API_TOKEN=xxx`
+
+---
+
+## 🔌 Monitoring UPS APC (NUT)
+
+> **Optionnel** — Requis uniquement si vous avez un onduleur APC et souhaitez monitorer son état.
+
+Le monitoring UPS via NUT nécessite un **accès USB physique** à l'onduleur.
+Il ne peut **pas** tourner dans la VM Proxmox sans USB passthrough.
+
+**Déployer NUT sur un device avec USB physique** (Raspberry Pi 5, Mini PC host, etc.) :
+
+```bash
+# Sur le device avec l'UPS branché en USB
+git clone https://github.com/tunisiano187/easy-GED /opt/easy-ged
+cd /opt/easy-ged
+
+# Identifier l'UPS : lsusb | grep -i apc
+# Copier et adapter la config NUT
+cp nut/ups.conf.example nut/ups.conf
+cp nut/upsd.users.example nut/upsd.users
+nano nut/upsd.users   # ← Changer CHANGER_CE_MOT_DE_PASSE
+
+# Renseigner le mot de passe dans .env
+echo "NUT_UPSD_PASSWORD=mon_mot_de_passe" >> .env
+
+# Lancer le stack NUT
+docker compose -f docker-compose.nut.yml up -d
+```
+
+**Accès :**
+- Interface web NUT : `http://IP_DEVICE:6543`
+- Serveur NUT (pour clients Proxmox/VMs) : `IP_DEVICE:3493`
+
+**Configurer Proxmox pour utiliser le NUT distant :**
+```bash
+# Sur chaque nœud Proxmox
+apt install nut-client -y
+# Configurer /etc/nut/upsmon.conf :
+# MONITOR apc@IP_DEVICE 1 upsmon MOT_DE_PASSE slave
+```
 
 ---
 

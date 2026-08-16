@@ -1,0 +1,18 @@
+# =============================================================================
+# NUT — Configuration UPS APC
+# Copier en ups.conf et adapter à votre modèle
+# =============================================================================
+
+# UPS APC avec connexion USB (Back-UPS, Smart-UPS USB)
+[apc]
+  driver = usbhid-ups
+  port = auto
+  desc = "APC UPS Principal"
+  # Délai avant arrêt système après coupure (secondes)
+  # offdelay = 120
+
+# UPS APC avec connexion série (ancien modèle Smart-UPS)
+# [apc_serie]
+#   driver = apcsmart
+#   port = /dev/ttyS0
+#   desc = "APC Smart-UPS RS232"
