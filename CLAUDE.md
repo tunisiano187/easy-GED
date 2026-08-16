@@ -260,6 +260,9 @@ Configuration PBS recommandée :
 - **1 PR = 1 raison unique** : ne jamais mélanger des sujets différents dans une même PR.
   Exemples de raisons distinctes : une feature, un bugfix, une mise à jour de doc,
   un nouveau fichier de config, une mise à jour de dépendance.
+- **Doc et BACKLOG inclus dans la PR de la feature** : toute mise à jour de `BACKLOG.md`,
+  `README.md` ou autre doc directement liée à une feature fait partie du même commit/PR.
+  Ne jamais ouvrir une PR séparée juste pour cocher une case dans BACKLOG.md.
 - **Maximum 2 PRs ouvertes simultanément** : attendre qu'une PR soit mergée ou fermée
   avant d'en ouvrir une troisième.
 - **Jamais de push direct sur `main`** : toujours passer par une branche + PR.
