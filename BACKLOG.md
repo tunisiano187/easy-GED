@@ -10,6 +10,7 @@
 | Fonctionnalité | Fichier(s) |
 |---|---|
 | Stack Docker complète (Paperless, n8n, Ollama, PostgreSQL, Redis, Caddy, Portainer) | `docker-compose.yml` |
+| Option n8n externe (`N8N_EXTERNAL_URL`) — utiliser un n8n existant | `docker-compose.yml`, `.env.example`, `scripts/install.sh`, `notify-n8n.sh` |
 | Configuration `.env.example` | `.env.example` |
 | Stack Raspberry Pi 5 (mode split) | `docker-compose.pi.yml` |
 | Stack NUT/UPS indépendante | `docker-compose.nut.yml` |
