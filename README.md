@@ -18,12 +18,14 @@
 |---|---|---|
 | 🖥️ **Serveur Mini PC** | Mini PC Ryzen 7430U/7530U, 16 Go RAM, **1 To NVMe** (viser 1 To intégré) | [Chercher →](https://www.amazon.fr/s?k=mini+pc+ryzen+7430U+16go+1to) |
 | 💾 **SSD 1 To** (si serveur livré en 512 Go) | Kingston NV2 ou NV3, M.2 NVMe 1 To | [Chercher →](https://www.amazon.fr/s?k=ssd+nvme+m2+1to+kingston) |
-| 📄 **Scanner (option 1)** | Fujitsu ScanSnap iX1300 — compact, push SMB automatique | [Voir →](https://www.amazon.fr/ScanSnap-iX1300-Document-Automatique-Standards/dp/B09HS7WRNX) |
-| 📄 **Scanner (option 2)** | Brother ADS-1800W — écran tactile, WiFi, plus polyvalent | [Voir →](https://www.amazon.fr/Brother-ADS-1800W-Scanner-Compact-Portable/dp/B0CYTKGLRP) |
+| 📄 **Scanner (option WiFi/SMB)** | Fujitsu ScanSnap iX1300 — compact, pousse directement via SMB sans PC | [Voir →](https://www.amazon.fr/ScanSnap-iX1300-Document-Automatique-Standards/dp/B09HS7WRNX) |
+| 📄 **Scanner (option USB + Pi 5)** | Brother ADS-1200 — USB, ultra-compact, avaleur, compatible Linux/SANE | [Voir →](https://www.amazon.fr/Brother-ADS-1200-Documents-Portable-Plastifi%C3%A9es/dp/B07H3CTHF3) |
 
 > **💡 Conseil serveur :** Chercher un Mini PC avec le SSD **déjà en 1 To** — c'est souvent plus économique qu'acheter serveur + SSD séparément. Mots-clés : `mini pc ryzen 7430U 1to 16go`.
 
-> **💡 Scanner :** Le ScanSnap iX1300 s'intègre très bien sur un bureau (format U-turn, compact). Le Brother ADS-1800W a un écran tactile qui facilite la configuration des raccourcis de numérisation.
+> **💡 Scanner :**
+> - **ScanSnap iX1300** : scanner WiFi/USB compact (format U-turn). Se connecte en SMB directement à la VM — aucun PC intermédiaire. Idéal si tu n'as pas de Pi 5.
+> - **Brother ADS-1200** : USB uniquement, ultra-compact, duplex 25 ppm, ADF 20 feuilles. Branché au **Raspberry Pi 5** → numérisation automatique dès qu'un document est inséré (service SANE + scanbd inclus dans `docker-compose.pi.yml`). Compatible Linux nativement (driver `brscan5`).
 
 ### Matériel déjà en ta possession
 
