@@ -6,7 +6,7 @@
 Elle automatise la numérisation, l'analyse IA et le classement des courriers et factures.
 
 - **Dépôt** : https://github.com/tunisiano187/easy-GED
-- **Branche de travail** : claude/plan-mise-en-place-cywqty
+- **Branche de travail** : main (les features partent sur `feat/<sujet>` et reviennent sur main via PR)
 - **Langue principale** : Français (documents, UI, prompts IA)
 - **Statut** : En cours de mise en place
 
