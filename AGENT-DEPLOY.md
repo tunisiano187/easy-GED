@@ -114,11 +114,45 @@ chmod +x paperless/init/*.sh
 chmod +x paperless/scripts/*.sh
 
 ### ÉTAPE 6 — Démarrer la stack Docker
-docker compose pull
-docker compose up -d
 
-# Si Cloudflare Tunnel activé :
-# docker compose --profile cloudflare up -d
+Vérifier d'abord si l'utilisateur utilise un n8n externe ou intégré :
+
+```bash
+# Lire la valeur de N8N_EXTERNAL_URL dans .env
+N8N_EXTERNAL_URL=$(grep '^N8N_EXTERNAL_URL=' .env | cut -d'=' -f2)
+```
+
+**Si `N8N_EXTERNAL_URL` est non vide** (n8n externe) :
+- Ne pas activer le profil `internal-n8n` — le service ged-n8n ne sera PAS démarré
+- Informer l'utilisateur des prérequis sur son n8n existant :
+  ```
+  ⚠  Votre n8n externe est configuré : ${N8N_EXTERNAL_URL}
+  Actions requises sur votre n8n existant :
+    1. Installer le package qrcode dans le conteneur n8n :
+       npm install -g qrcode
+    2. Ajouter la variable d'environnement :
+       NODE_FUNCTION_ALLOW_EXTERNAL=qrcode
+    3. Redémarrer votre conteneur n8n
+    4. Importer les workflows depuis n8n/workflows/ dans votre n8n
+       (ged-main-workflow.json et ged-budget-mensuel.json)
+  ```
+- Commandes de démarrage :
+  ```bash
+  docker compose pull
+  docker compose up -d
+  # Si Cloudflare Tunnel activé en plus :
+  # docker compose --profile cloudflare up -d
+  ```
+
+**Si `N8N_EXTERNAL_URL` est vide** (n8n intégré, par défaut) :
+- Activer le profil `internal-n8n` pour démarrer le service ged-n8n
+- Commandes de démarrage :
+  ```bash
+  docker compose --profile internal-n8n pull
+  docker compose --profile internal-n8n up -d
+  # Si Cloudflare Tunnel activé en plus :
+  # docker compose --profile internal-n8n --profile cloudflare up -d
+  ```
 
 Attendre que tous les services soient healthy (max 5 minutes) :
 docker compose ps

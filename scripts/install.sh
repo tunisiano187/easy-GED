@@ -163,14 +163,30 @@ else
     read -rp "Appuyer sur ENTRÉE quand le .env est configuré..." _
 fi
 
+# --- Configuration n8n ---
+echo ""
+echo "=== Configuration n8n ==="
+read -p "Avez-vous déjà un n8n existant que vous souhaitez utiliser ? [o/N] " use_external_n8n
+if [[ "$use_external_n8n" =~ ^[oOyY]$ ]]; then
+    read -p "URL de votre n8n (ex: http://192.168.1.10:5678) : " n8n_url
+    sed -i "s|^N8N_EXTERNAL_URL=.*|N8N_EXTERNAL_URL=${n8n_url}|" .env
+    echo -e "${YELLOW}⚠️  N'oubliez pas d'installer le package qrcode sur votre n8n :${NC}"
+    echo "   npm install -g qrcode"
+    echo "   + NODE_FUNCTION_ALLOW_EXTERNAL=qrcode dans vos env vars n8n"
+    COMPOSE_PROFILES=""
+else
+    sed -i "s|^N8N_EXTERNAL_URL=.*|N8N_EXTERNAL_URL=|" .env
+    COMPOSE_PROFILES="--profile internal-n8n"
+fi
+
 # --- Démarrer la stack Docker ---
 echo ""
 info "Téléchargement des images Docker..."
-docker compose pull 2>/dev/null | tail -5
+docker compose $COMPOSE_PROFILES pull 2>/dev/null | tail -5
 
 echo ""
 info "Démarrage des conteneurs..."
-docker compose up -d
+docker compose $COMPOSE_PROFILES up -d
 
 # Attendre que les services soient prêts
 echo ""

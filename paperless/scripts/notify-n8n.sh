@@ -7,7 +7,9 @@
 #   DOCUMENT_ORIGINAL_FILENAME, DOCUMENT_ARCHIVE_PATH, DOCUMENT_SOURCE_PATH
 # =============================================================================
 
-N8N_WEBHOOK_URL="${N8N_WEBHOOK_URL:-http://n8n:5678/webhook/paperless-document}"
+# URL n8n : externe si N8N_EXTERNAL_URL est défini, interne sinon
+N8N_BASE="${N8N_EXTERNAL_URL:-http://n8n:5678}"
+N8N_WEBHOOK_URL="${N8N_WEBHOOK_URL:-${N8N_BASE}/webhook/paperless-document}"
 
 # Construire le payload JSON avec les infos du document
 PAYLOAD=$(cat <<EOF
