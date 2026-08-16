@@ -96,7 +96,10 @@ services:
   # n8n — Orchestration Workflows
   # ---------------------------------------------------------------------------
   n8n:
-    image: n8nio/n8n:latest
+    build:
+      context: ./n8n
+      dockerfile: Dockerfile
+    image: easy-ged-n8n:latest
     container_name: ged-n8n
     restart: unless-stopped
     depends_on:
@@ -127,6 +130,8 @@ services:
       N8N_SMTP_PASS: ${SMTP_PASSWORD:-}
       N8N_SMTP_SENDER: ${SMTP_FROM:-}
       N8N_SMTP_SSL: "false"
+      # Autorise le package qrcode dans les nœuds Code (QR EPC local)
+      NODE_FUNCTION_ALLOW_EXTERNAL: qrcode
     volumes:
       - n8n-data:/home/node/.n8n
     networks:
