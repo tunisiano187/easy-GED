@@ -1,0 +1,32 @@
+# Variables d'environnement (contiennent des secrets)
+.env
+
+# Données locales Docker (volumes montés localement)
+data/
+media/
+export/
+consume/
+pgdata/
+n8n-data/
+ollama-models/
+
+# Sauvegardes locales
+backups/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Éditeurs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Restic cache
+.cache/restic/

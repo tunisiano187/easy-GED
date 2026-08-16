@@ -1,0 +1,251 @@
+services:
+
+  # ---------------------------------------------------------------------------
+  # Base de données PostgreSQL (partagée : Paperless + n8n)
+  # ---------------------------------------------------------------------------
+  paperless-db:
+    image: postgres:15-alpine
+    container_name: ged-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-paperless}
+      POSTGRES_USER: ${POSTGRES_USER:-paperless}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init-n8n-db.sql:/docker-entrypoint-initdb.d/init-n8n-db.sql:ro
+    networks:
+      - ged-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-paperless}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Redis (cache Paperless)
+  # ---------------------------------------------------------------------------
+  paperless-redis:
+    image: redis:7-alpine
+    container_name: ged-redis
+    restart: unless-stopped
+    networks:
+      - ged-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Paperless-ngx — GED + OCR
+  # ---------------------------------------------------------------------------
+  paperless-ngx:
+    image: ghcr.io/paperless-ngx/paperless-ngx:latest
+    container_name: ged-paperless
+    restart: unless-stopped
+    depends_on:
+      paperless-db:
+        condition: service_healthy
+      paperless-redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      PAPERLESS_REDIS: redis://paperless-redis:6379
+      PAPERLESS_DBHOST: paperless-db
+      PAPERLESS_DBNAME: ${POSTGRES_DB:-paperless}
+      PAPERLESS_DBUSER: ${POSTGRES_USER:-paperless}
+      PAPERLESS_DBPASS: ${POSTGRES_PASSWORD}
+      PAPERLESS_SECRET_KEY: ${PAPERLESS_SECRET_KEY}
+      PAPERLESS_URL: ${PAPERLESS_URL:-http://localhost:8000}
+      PAPERLESS_OCR_LANGUAGE: ${PAPERLESS_OCR_LANGUAGE:-fra+eng}
+      PAPERLESS_TIME_ZONE: ${PAPERLESS_TIME_ZONE:-Europe/Paris}
+      PAPERLESS_ADMIN_USER: ${PAPERLESS_ADMIN_USER:-admin}
+      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD}
+      PAPERLESS_ADMIN_MAIL: ${PAPERLESS_ADMIN_MAIL:-admin@example.com}
+      # Surveillance email IMAP (optionnel)
+      PAPERLESS_EMAIL_HOST: ${PAPERLESS_EMAIL_HOST:-}
+      PAPERLESS_EMAIL_PORT: ${PAPERLESS_EMAIL_PORT:-993}
+      PAPERLESS_EMAIL_HOST_USER: ${PAPERLESS_EMAIL_HOST_USER:-}
+      PAPERLESS_EMAIL_HOST_PASSWORD: ${PAPERLESS_EMAIL_HOST_PASSWORD:-}
+      PAPERLESS_EMAIL_FROM: ${PAPERLESS_EMAIL_FROM:-}
+      # OCR avancé
+      PAPERLESS_OCR_OUTPUT_TYPE: pdfa
+      PAPERLESS_OCR_ROTATE_PAGES: "true"
+      PAPERLESS_OCR_ROTATE_PAGES_THRESHOLD: "12"
+      PAPERLESS_OCR_DESKEW: "true"
+      PAPERLESS_OCR_CLEAN: clean
+      # Webhook vers n8n après ingestion
+      PAPERLESS_POST_CONSUME_SCRIPT: /usr/local/bin/notify-n8n.sh
+    volumes:
+      - paperless-data:/usr/src/paperless/data
+      - paperless-media:/usr/src/paperless/media
+      - paperless-export:/usr/src/paperless/export
+      - paperless-consume:/usr/src/paperless/consume
+      - ./paperless/scripts/notify-n8n.sh:/usr/local/bin/notify-n8n.sh:ro
+    networks:
+      - ged-network
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "-S", "--max-time", "2", "http://localhost:8000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # n8n — Orchestration Workflows
+  # ---------------------------------------------------------------------------
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: ged-n8n
+    restart: unless-stopped
+    depends_on:
+      paperless-db:
+        condition: service_healthy
+    ports:
+      - "5678:5678"
+    environment:
+      # Base de données n8n (base séparée dans le même PostgreSQL)
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: paperless-db
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${N8N_DB_NAME:-n8n}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-paperless}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      # Sécurité
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_BASIC_AUTH_ACTIVE: ${N8N_BASIC_AUTH_ACTIVE:-true}
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
+      # URL webhooks
+      WEBHOOK_URL: ${N8N_WEBHOOK_BASE_URL:-http://localhost:5678}
+      N8N_HOST: "0.0.0.0"
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: "http"
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Europe/Paris}
+      # Notifications
+      N8N_EMAIL_MODE: smtp
+      N8N_SMTP_HOST: ${SMTP_HOST:-}
+      N8N_SMTP_PORT: ${SMTP_PORT:-587}
+      N8N_SMTP_USER: ${SMTP_USER:-}
+      N8N_SMTP_PASS: ${SMTP_PASSWORD:-}
+      N8N_SMTP_SENDER: ${SMTP_FROM:-}
+      N8N_SMTP_SSL: "false"
+    volumes:
+      - n8n-data:/home/node/.n8n
+    networks:
+      - ged-network
+
+  # ---------------------------------------------------------------------------
+  # Ollama — Serveur IA Local (Mistral 7B)
+  # ---------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ged-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    networks:
+      - ged-network
+    # Décommentez si vous avez un GPU NVIDIA disponible dans la VM :
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Samba — Partage SMB pour réception fichiers scanner
+  # ---------------------------------------------------------------------------
+  samba:
+    image: dperson/samba:latest
+    container_name: ged-samba
+    restart: unless-stopped
+    ports:
+      - "445:445"
+      - "139:139"
+    environment:
+      TZ: ${PAPERLESS_TIME_ZONE:-Europe/Paris}
+    command: >
+      -u "${SCANNER_SMB_USER:-scanner};${SCANNER_SMB_PASSWORD}"
+      -s "consume;/consume;yes;no;no;${SCANNER_SMB_USER:-scanner};${SCANNER_SMB_USER:-scanner};Paperless Consume"
+      -p
+    volumes:
+      - paperless-consume:/consume
+    networks:
+      - ged-network
+
+  # ---------------------------------------------------------------------------
+  # Portainer CE — Interface web de gestion Docker
+  # ---------------------------------------------------------------------------
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: ged-portainer
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer-data:/data
+    networks:
+      - ged-network
+
+  # ---------------------------------------------------------------------------
+  # Watchtower — Mises à jour automatiques des images Docker
+  # ---------------------------------------------------------------------------
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: ged-watchtower
+    restart: unless-stopped
+    environment:
+      # Vérifier les mises à jour chaque nuit à 3h00
+      WATCHTOWER_SCHEDULE: "0 0 3 * * *"
+      # Nettoyer les anciennes images après mise à jour
+      WATCHTOWER_CLEANUP: "true"
+      # Ne mettre à jour que les conteneurs easy-GED (étiquetés)
+      WATCHTOWER_LABEL_ENABLE: "false"
+      # Notification Telegram après mise à jour (optionnel)
+      WATCHTOWER_NOTIFICATION_URL: "telegram://${TELEGRAM_BOT_TOKEN}@telegram?chats=${TELEGRAM_CHAT_ID}&title=easy-GED+Update"
+      TZ: ${PAPERLESS_TIME_ZONE:-Europe/Paris}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - ged-network
+
+# =============================================================================
+# Volumes persistants
+# =============================================================================
+volumes:
+  postgres-data:
+    driver: local
+  paperless-data:
+    driver: local
+  paperless-media:
+    driver: local
+  paperless-export:
+    driver: local
+  paperless-consume:
+    driver: local
+  n8n-data:
+    driver: local
+  ollama-models:
+    driver: local
+  portainer-data:
+    driver: local
+
+# =============================================================================
+# Réseau interne
+# =============================================================================
+networks:
+  ged-network:
+    driver: bridge

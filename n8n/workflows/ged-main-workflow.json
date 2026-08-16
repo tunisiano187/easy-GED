@@ -1,0 +1,570 @@
+{
+  "name": "easy-GED — Traitement Documents",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "paperless-document",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "01-webhook-trigger",
+      "name": "Webhook Paperless",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "paperless-document-created"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "OK",
+        "options": {}
+      },
+      "id": "02-webhook-response",
+      "name": "Réponse Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [460, 160]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.PAPERLESS_URL }}/api/documents/{{ $json.body.document_id }}/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "03-get-document",
+      "name": "Récupérer Document Paperless",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "paperless-token",
+          "name": "Paperless API Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraire le texte OCR du document Paperless\nconst doc = $input.first().json;\nconst ocrText = doc.content || doc.original_file_name || '';\nconst documentId = doc.id;\nconst fileName = doc.original_file_name || doc.title;\n\nif (!ocrText || ocrText.trim().length < 20) {\n  return [{\n    json: {\n      document_id: documentId,\n      file_name: fileName,\n      ocr_text: ocrText,\n      error: 'Texte OCR trop court ou vide',\n      skip: true\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    document_id: documentId,\n    file_name: fileName,\n    ocr_text: ocrText.substring(0, 8000), // Limiter pour le LLM\n    skip: false\n  }\n}];"
+      },
+      "id": "04-extract-ocr",
+      "name": "Extraire Texte OCR",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "skip-check",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEqual"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "05-check-ocr",
+      "name": "OCR Valide ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ged-ollama:11434/api/generate",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "mistral:7b-instruct"
+            },
+            {
+              "name": "stream",
+              "value": "={{ false }}"
+            },
+            {
+              "name": "options",
+              "value": "={{ { \"temperature\": 0, \"num_predict\": 1024, \"top_p\": 0.9 } }}"
+            },
+            {
+              "name": "prompt",
+              "value": "={{ $('Extraire Texte OCR').first().json.prompt_text }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "06-ollama-analyze",
+      "name": "Analyser avec Mistral",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 220]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Préparer le prompt pour Ollama Mistral\nconst data = $input.first().json;\nconst ocrText = data.ocr_text;\n\nconst systemPrompt = `Tu es un assistant expert en analyse de documents administratifs et financiers français.\nAnalyse le texte OCR du document et extrais les informations structurées.\n\nRÈGLES STRICTES :\n1. Réponds UNIQUEMENT avec un objet JSON valide, sans markdown, sans explication.\n2. Si une information est absente ou incertaine, utilise null (sans guillemets).\n3. Les montants sont en euros, format décimal avec point (ex: 125.50).\n4. Les dates sont au format ISO 8601 : YYYY-MM-DD.\n5. Pour l'IBAN, extraire le format complet ou null.\n6. Ne jamais inventer d'informations non présentes dans le texte.\n\nTYPES DE DOCUMENTS :\n- \"facture\" : une facture à payer\n- \"rappel\" : un rappel de paiement, mise en demeure, relance\n- \"courrier_administratif\" : courrier officiel d'une administration\n- \"attestation\" : certificat, attestation, quittance, reçu\n\nFORMAT JSON ATTENDU :\n{\n  \"emetteur\": \"Nom émetteur\",\n  \"type_document\": \"facture|rappel|courrier_administratif|attestation\",\n  \"montant_total\": 0.00,\n  \"date_document\": \"YYYY-MM-DD\",\n  \"date_echeance\": \"YYYY-MM-DD\",\n  \"iban\": null,\n  \"bic\": null,\n  \"communication\": null,\n  \"numero_facture\": null,\n  \"statut_paiement\": \"Non Payé|Payé|Rappel Reçu|En Litige\",\n  \"notes\": null\n}\n\nTEXTE DU DOCUMENT :\\n${ocrText}`;\n\n// Retourner avec le prompt préparé\nreturn [{\n  json: {\n    ...data,\n    prompt_text: systemPrompt\n  }\n}];"
+      },
+      "id": "04b-prepare-prompt",
+      "name": "Préparer Prompt Ollama",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 220]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parser la réponse JSON de Mistral\nconst ollamaResponse = $input.first().json;\nconst rawResponse = ollamaResponse.response || '';\nconst documentData = $('Extraire Texte OCR').first().json;\n\nlet parsed = {};\ntry {\n  // Nettoyer la réponse (retirer markdown si présent)\n  let cleaned = rawResponse\n    .replace(/```json\\n?/g, '')\n    .replace(/```\\n?/g, '')\n    .trim();\n  \n  // Trouver le premier objet JSON valide\n  const jsonMatch = cleaned.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    parsed = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('Pas de JSON trouvé dans la réponse');\n  }\n} catch (e) {\n  // Valeurs par défaut si parsing échoué\n  parsed = {\n    emetteur: null,\n    type_document: 'courrier_administratif',\n    montant_total: null,\n    date_document: null,\n    date_echeance: null,\n    iban: null,\n    bic: null,\n    communication: null,\n    numero_facture: null,\n    statut_paiement: 'Non Payé',\n    notes: `Erreur parsing IA: ${e.message}`\n  };\n}\n\n// Normalisation des valeurs\nconst normalize = (obj) => {\n  if (obj.montant_total !== null && typeof obj.montant_total === 'string') {\n    obj.montant_total = parseFloat(obj.montant_total.replace(',', '.').replace(/[^0-9.]/g, '')) || null;\n  }\n  if (!['facture', 'rappel', 'courrier_administratif', 'attestation'].includes(obj.type_document)) {\n    obj.type_document = 'courrier_administratif';\n  }\n  if (!['Non Payé', 'Payé', 'En Litige', 'Rappel Reçu'].includes(obj.statut_paiement)) {\n    obj.statut_paiement = obj.type_document === 'rappel' ? 'Rappel Reçu' : 'Non Payé';\n  }\n  return obj;\n};\n\nparsed = normalize(parsed);\n\n// Générer QR Code EPC si IBAN disponible\nlet qrCodeUrl = null;\nif (parsed.iban && parsed.montant_total) {\n  const ibanClean = parsed.iban.replace(/\\s/g, '');\n  const amount = parsed.montant_total.toFixed(2);\n  const beneficiary = (parsed.emetteur || 'Bénéficiaire').substring(0, 70);\n  const ref = (parsed.communication || parsed.numero_facture || '').substring(0, 140);\n  // Format EPC QR Code (SEPA)\n  const epcData = `BCD\\n002\\n1\\nSCT\\n${parsed.bic || ''}\\n${beneficiary}\\n${ibanClean}\\nEUR${amount}\\n\\n${ref}`;\n  qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(epcData)}`;\n  // Note: En production, générer le QR localement pour rester 100% privé\n}\n\nreturn [{\n  json: {\n    document_id: documentData.document_id,\n    file_name: documentData.file_name,\n    ...parsed,\n    qr_code_url: qrCodeUrl,\n    processed_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "07-parse-response",
+      "name": "Parser Réponse IA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 220]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.PAPERLESS_URL }}/api/documents/{{ $json.document_id }}/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "custom_fields",
+              "value": "={{ JSON.stringify([\n  $json.emetteur ? { field: 'emetteur', value: $json.emetteur } : null,\n  $json.numero_facture ? { field: 'numero_facture', value: $json.numero_facture } : null,\n  $json.montant_total !== null ? { field: 'montant_total', value: String($json.montant_total) } : null,\n  $json.date_echeance ? { field: 'date_echeance', value: $json.date_echeance } : null,\n  $json.iban ? { field: 'iban', value: $json.iban } : null,\n  $json.communication ? { field: 'communication', value: $json.communication } : null,\n  { field: 'statut_paiement', value: $json.statut_paiement || 'Non Payé' }\n].filter(f => f !== null)) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "08-update-paperless",
+      "name": "Mettre à Jour Paperless",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 220],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "paperless-token",
+          "name": "Paperless API Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Parser Réponse IA').first().json.type_document }}",
+                    "rightValue": "facture",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "facture"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Parser Réponse IA').first().json.type_document }}",
+                    "rightValue": "rappel",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "rappel"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "09-switch-type",
+      "name": "Type de Document",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1780, 220]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calculer les jours restants avant échéance\nconst data = $('Parser Réponse IA').first().json;\nconst today = new Date();\nlet joursRestants = null;\nlet urgence = false;\n\nif (data.date_echeance) {\n  const echeance = new Date(data.date_echeance);\n  joursRestants = Math.ceil((echeance - today) / (1000 * 60 * 60 * 24));\n  urgence = joursRestants <= 7;\n}\n\nreturn [{\n  json: {\n    ...data,\n    jours_restants: joursRestants,\n    urgence: urgence,\n    message_titre: urgence \n      ? `🚨 URGENT — Facture à payer dans ${joursRestants} jour(s) !`\n      : `📄 Nouvelle facture reçue`,\n    message_corps: [\n      `📧 Émetteur : ${data.emetteur || 'Inconnu'}`,\n      data.numero_facture ? `🔢 Référence : ${data.numero_facture}` : null,\n      data.montant_total !== null ? `💶 Montant : ${data.montant_total.toFixed(2)} €` : null,\n      data.date_echeance ? `📅 Échéance : ${data.date_echeance}${joursRestants !== null ? ` (${joursRestants}j)` : ''}` : null,\n      data.iban ? `🏦 IBAN : ${data.iban}` : null,\n      data.communication ? `📝 Réf paiement : ${data.communication}` : null,\n      data.qr_code_url ? `\\nQR Code EPC disponible pour paiement mobile` : null\n    ].filter(Boolean).join('\\n')\n  }\n}];"
+      },
+      "id": "10-prepare-facture",
+      "name": "Préparer Notification Facture",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 100]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.PAPERLESS_URL }}/api/documents/?custom_field_query={{ encodeURIComponent(JSON.stringify(['AND', ['custom_fields__field__name', 'emetteur', $('Parser Réponse IA').first().json.emetteur || ''], ['custom_fields__field__name', 'statut_paiement', 'Payé']])) }}&page_size=10",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "11-search-paid",
+      "name": "Chercher Facture Payée",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 340],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "paperless-token",
+          "name": "Paperless API Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Vérifier si une facture payée du même émetteur correspond au rappel\nconst rappelData = $('Parser Réponse IA').first().json;\nconst searchResults = $('Chercher Facture Payée').first().json;\n\nconst rappelMontant = rappelData.montant_total;\nconst documents = searchResults.results || [];\n\nlet facturePayeeTrouvee = null;\n\nfor (const doc of documents) {\n  // Chercher dans les champs personnalisés\n  const fields = doc.custom_fields || [];\n  const montantField = fields.find(f => f.field === 'montant_total');\n  const statutField = fields.find(f => f.field === 'statut_paiement');\n  \n  if (statutField && statutField.value === 'Payé') {\n    if (rappelMontant === null) {\n      // Pas de montant dans le rappel : signaler quand même\n      facturePayeeTrouvee = doc;\n      break;\n    }\n    if (montantField && montantField.value !== null) {\n      const montantDoc = parseFloat(montantField.value);\n      const tolerance = rappelMontant * 0.05; // ±5%\n      if (Math.abs(montantDoc - rappelMontant) <= tolerance) {\n        facturePayeeTrouvee = doc;\n        break;\n      }\n    }\n  }\n}\n\nconst litige = facturePayeeTrouvee !== null;\n\nreturn [{\n  json: {\n    ...rappelData,\n    litige: litige,\n    facture_payee: facturePayeeTrouvee ? {\n      id: facturePayeeTrouvee.id,\n      titre: facturePayeeTrouvee.title,\n      url: `${process.env.PAPERLESS_URL || 'http://localhost:8000'}/documents/${facturePayeeTrouvee.id}/`\n    } : null,\n    message_titre: litige\n      ? `⚠️ LITIGE DÉTECTÉ — Rappel abusif de ${rappelData.emetteur || 'Émetteur inconnu'} !`\n      : `🔔 Rappel de paiement reçu`,\n    message_corps: litige\n      ? [\n          `🚨 Un rappel a été reçu de ${rappelData.emetteur || 'inconnu'} alors qu'une facture similaire est marquée comme PAYÉE.`,\n          rappelData.montant_total !== null ? `💶 Montant du rappel : ${rappelData.montant_total.toFixed(2)} €` : null,\n          `📄 Facture payée correspondante : ${facturePayeeTrouvee.title}`,\n          `🔗 Voir dans Paperless : ${process.env.PAPERLESS_URL || 'http://localhost:8000'}/documents/${facturePayeeTrouvee.id}/`,\n          `\\n⚡ ACTION REQUISE : Contester ce rappel avec la preuve de paiement jointe.`\n        ].filter(Boolean).join('\\n')\n      : [\n          `📧 Émetteur : ${rappelData.emetteur || 'Inconnu'}`,\n          rappelData.montant_total !== null ? `💶 Montant : ${rappelData.montant_total.toFixed(2)} €` : null,\n          rappelData.date_echeance ? `📅 Échéance : ${rappelData.date_echeance}` : null,\n          `\\n⚡ ACTION REQUISE : Vérifier et régler ce rappel.`\n        ].filter(Boolean).join('\\n')\n  }\n}];"
+      },
+      "id": "12-check-litige",
+      "name": "Vérifier Litige",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2220, 340]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "={{ $json.message_titre }}\\n\\n{{ $json.message_corps }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "disable_notification": "={{ !$json.urgence && $json.type_document !== 'rappel' }}"
+        }
+      },
+      "id": "13-telegram-facture",
+      "name": "Telegram — Facture",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2440, 100],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot",
+          "name": "Telegram Bot easy-GED"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "={{ $json.message_titre }}\\n\\n{{ $json.message_corps }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "disable_notification": false
+        }
+      },
+      "id": "14-telegram-rappel",
+      "name": "Telegram — Rappel",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2440, 340],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot",
+          "name": "Telegram Bot easy-GED"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_FROM }}",
+        "toEmail": "={{ $env.NOTIFICATION_EMAIL }}",
+        "subject": "={{ $json.message_titre }}",
+        "emailFormat": "text",
+        "text": "={{ $json.message_corps }}\\n\\n---\\nDocument : {{ $json.file_name }}\\nTraité le : {{ $json.processed_at }}\\n\\neasy-GED — Votre GED privée"
+      },
+      "id": "15-email-facture",
+      "name": "Email — Facture",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2440, 0],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-creds",
+          "name": "SMTP Notifications"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_FROM }}",
+        "toEmail": "={{ $env.NOTIFICATION_EMAIL }}",
+        "subject": "={{ $json.message_titre }}",
+        "emailFormat": "text",
+        "text": "={{ $json.message_corps }}\\n\\n---\\nDocument : {{ $json.file_name }}\\nTraité le : {{ $json.processed_at }}\\n\\neasy-GED — Votre GED privée"
+      },
+      "id": "16-email-rappel",
+      "name": "Email — Rappel",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2440, 440],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-creds",
+          "name": "SMTP Notifications"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_FROM }}",
+        "toEmail": "={{ $env.NOTIFICATION_EMAIL }}",
+        "subject": "={{ $json.message_titre }}",
+        "emailFormat": "text",
+        "text": "={{ $json.message_corps }}\\n\\n---\\nDocument Paperless : {{ $json.file_name }}\\nID document rappel : {{ $json.document_id }}\\n{{ $json.facture_payee ? 'Facture payée liée : ' + $json.facture_payee.url : '' }}\\n\\neasy-GED — Votre GED privée",
+        "attachments": ""
+      },
+      "id": "16b-email-litige",
+      "name": "Email — Litige URGENT",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2660, 340],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-creds",
+          "name": "SMTP Notifications"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log des documents sans notification (courrier_admin, attestation)\nconst data = $('Parser Réponse IA').first().json;\nconsole.log(`[easy-GED] Document classé : ${data.type_document} - ${data.emetteur || 'sans émetteur'} - ID: ${data.document_id}`);\nreturn [{ json: { status: 'classé', ...data } }];"
+      },
+      "id": "17-classement-simple",
+      "name": "Classement Simple",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 560]
+    }
+  ],
+  "connections": {
+    "Webhook Paperless": {
+      "main": [
+        [
+          {
+            "node": "Réponse Webhook",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Récupérer Document Paperless",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Récupérer Document Paperless": {
+      "main": [
+        [
+          {
+            "node": "Extraire Texte OCR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraire Texte OCR": {
+      "main": [
+        [
+          {
+            "node": "OCR Valide ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OCR Valide ?": {
+      "main": [
+        [
+          {
+            "node": "Préparer Prompt Ollama",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Préparer Prompt Ollama": {
+      "main": [
+        [
+          {
+            "node": "Analyser avec Mistral",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyser avec Mistral": {
+      "main": [
+        [
+          {
+            "node": "Parser Réponse IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parser Réponse IA": {
+      "main": [
+        [
+          {
+            "node": "Mettre à Jour Paperless",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mettre à Jour Paperless": {
+      "main": [
+        [
+          {
+            "node": "Type de Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Type de Document": {
+      "main": [
+        [
+          {
+            "node": "Préparer Notification Facture",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Chercher Facture Payée",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classement Simple",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer Notification Facture": {
+      "main": [
+        [
+          {
+            "node": "Email — Facture",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Telegram — Facture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chercher Facture Payée": {
+      "main": [
+        [
+          {
+            "node": "Vérifier Litige",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vérifier Litige": {
+      "main": [
+        [
+          {
+            "node": "Telegram — Rappel",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email — Rappel",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email — Litige URGENT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "easy-GED"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2026-08-16T00:00:00.000Z",
+  "versionId": "1"
+}
