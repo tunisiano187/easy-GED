@@ -94,11 +94,17 @@ services:
 
   # ---------------------------------------------------------------------------
   # n8n — Orchestration Workflows
+  # Pour utiliser un n8n existant : laisser N8N_EXTERNAL_URL dans .env et
+  # démarrer sans ce profil (docker compose up -d pour utiliser n8n externe).
+  # Par défaut (N8N_EXTERNAL_URL vide) : utiliser
+  # 'docker compose --profile internal-n8n up -d' pour activer ce service.
   # ---------------------------------------------------------------------------
   n8n:
     image: n8nio/n8n:latest
     container_name: ged-n8n
     restart: unless-stopped
+    profiles:
+      - internal-n8n
     depends_on:
       paperless-db:
         condition: service_healthy
@@ -200,7 +206,7 @@ services:
       - ged-network
     depends_on:
       - paperless-ngx
-      - n8n
+      # n8n retiré des dépendances car il peut être externe (profil internal-n8n)
       - portainer
 
   # ---------------------------------------------------------------------------
@@ -237,7 +243,7 @@ services:
       - cloudflare
     depends_on:
       - paperless-ngx
-      - n8n
+      # n8n non listé : peut être externe (profil internal-n8n)
 
   # ---------------------------------------------------------------------------
   # Watchtower — Mises à jour automatiques des images Docker (nuit à 3h00)
